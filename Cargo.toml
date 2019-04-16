@@ -1,0 +1,7 @@
+[package]
+name = "wg-tracker"
+version = "0.1.0"
+authors = ["Cameron McCormack <cam@mcc.id.au>"]
+edition = "2018"
+
+[dependencies]
