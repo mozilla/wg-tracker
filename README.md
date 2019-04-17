@@ -9,5 +9,6 @@ From there, Gecko developers can triage the resolutions and decide whether
 to file a bug in [Bugzilla](https://bugzilla.mozilla.org/) or to close them as
 as no action required.
 
-This tool is run on a server maintained by @heycam and performs changes under
-the @mozilla-apprentice user.
+This tool is run on a server maintained by [@heycam](https://github.com/heycam)
+and performs changes under the
+[@mozilla-apprentice](https://github.com/mozilla-apprentice) user.
