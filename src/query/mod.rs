@@ -81,6 +81,80 @@ pub fn updated_issues(
     Ok(result)
 }
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/github_schema.graphql",
+    query_path = "src/query/issue_comments.graphql",
+    response_derives = "Debug"
+)]
+struct IssueComments;
+
+#[derive(Debug, Default)]
+pub struct IssueCommentsResult {
+    pub total_count: i64,
+    pub comments: Vec<IssueComment>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IssueComment {
+    pub cursor: String,
+    pub url: String,
+    pub created_at: String,
+    pub body_text: String,
+}
+
+pub fn issue_comments(
+    token: &str,
+    wg_repo_owner: &str,
+    wg_repo_name: &str,
+    number: i64,
+    after: Option<&str>,
+) -> Result<IssueCommentsResult, Error> {
+    let q = IssueComments::build_query(issue_comments::Variables {
+        repo_owner: wg_repo_owner.to_string(),
+        repo_name: wg_repo_name.to_string(),
+        number,
+        after: after.map(|s| s.to_string()),
+    });
+
+    let response = CLIENT
+        .post(GITHUB_ENDPOINT)
+        .bearer_auth(token)
+        .json(&q)
+        .send()
+        .context("could not perform network request")?
+        .json::<Response<issue_comments::ResponseData>>()
+        .context("could not parse response")?;
+
+    if let Some(errors) = response.errors {
+        return Err(format_err!("errors in response: {:?}", errors));
+    }
+
+    let data = response
+        .data
+        .ok_or_else(|| format_err!("no data in response"))?;
+
+    let mut result: IssueCommentsResult = Default::default();
+    if let Some(comments) = data.repository.and_then(|r| r.issue).map(|i| i.comments) {
+        result.total_count = comments.total_count;
+        if let Some(edges) = comments.edges {
+            for edge in edges.into_iter().flatten() {
+                let cursor = edge.cursor;
+                if let Some(comment) = edge.node {
+                    result.comments.push(IssueComment {
+                        cursor,
+                        created_at: comment.created_at,
+                        url: comment.url,
+                        body_text: comment.body_text,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 lazy_static! {
     static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }

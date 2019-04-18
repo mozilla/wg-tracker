@@ -32,12 +32,13 @@ struct QueryIssueCommentsTask {
     number: i64,
     since: String,
     after: Option<String>,
+    so_far: Vec<query::IssueComment>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
 struct ProcessCommentTask {
     url: String,
-    body: String,
+    body_text: String,
 }
 
 impl State {
@@ -85,6 +86,7 @@ impl State {
 
         match self.tasks.front().cloned().unwrap() {
             Task::QueryIssues(t) => self.do_query_issues(config, t)?,
+            Task::QueryIssueComments(t) => self.do_query_issue_comments(config, t)?,
             _ => {}
         }
 
@@ -103,8 +105,9 @@ impl State {
 
         let since = t.since;
         let mut issues = t.so_far;
-        let have_more = issues.len() < result.total_count as usize && !result.issues.is_empty();
+        let got_any = !result.issues.is_empty();
         issues.extend(result.issues.into_iter());
+        let have_more = issues.len() < result.total_count as usize && got_any;
 
         if have_more {
             self.tasks.push_back(Task::QueryIssues(QueryIssuesTask {
@@ -124,6 +127,46 @@ impl State {
                 number: issue.issue_number,
                 since: since.clone(),
                 after: None,
+                so_far: Vec::new(),
+            })
+        }));
+
+        Ok(())
+    }
+
+    fn do_query_issue_comments(
+        &mut self,
+        config: &Config,
+        t: QueryIssueCommentsTask,
+    ) -> Result<(), Error> {
+        let result = query::issue_comments(
+            &config.github_key,
+            &config.wg_repo_owner,
+            &config.wg_repo_name,
+            t.number,
+            t.after.as_ref().map(|s| &**s),
+        )?;
+
+        let got_any = !result.comments.is_empty();
+        let mut comments = t.so_far;
+        comments.extend(result.comments.into_iter());
+        let have_more = comments.len() < result.total_count as usize && got_any;
+
+        if have_more {
+            self.tasks
+                .push_back(Task::QueryIssueComments(QueryIssueCommentsTask {
+                    number: t.number,
+                    since: t.since,
+                    after: comments.last().map(|i| i.cursor.clone()),
+                    so_far: comments,
+                }));
+            return Ok(());
+        }
+
+        self.tasks.extend(comments.into_iter().map(|comment| {
+            Task::ProcessComment(ProcessCommentTask {
+                url: comment.url,
+                body_text: comment.body_text,
             })
         }));
 
