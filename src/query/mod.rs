@@ -1,6 +1,6 @@
+use crate::util::CLIENT;
 use failure::{format_err, Error, ResultExt};
 use graphql_client::*;
-use lazy_static::lazy_static;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::json;
@@ -155,10 +155,6 @@ pub fn issue_comments(
     }
 
     Ok(result)
-}
-
-lazy_static! {
-    static ref CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
 const GITHUB_ENDPOINT: &'static str = "https://api.github.com/graphql";

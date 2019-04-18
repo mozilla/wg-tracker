@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::query;
+use crate::repo_config::RepoConfig;
 use failure::{format_err, Error, ResultExt};
 use std::collections::{HashSet, VecDeque};
 use std::fs::{self, File};
@@ -90,15 +91,15 @@ impl State {
         Ok(())
     }
 
-    pub fn iterate(&mut self, config: &Config) -> Result<(), Error> {
+    pub fn iterate(&mut self, config: &Config, repo_config: &RepoConfig) -> Result<(), Error> {
         if self.tasks.is_empty() {
             return Ok(());
         }
 
         match self.tasks.front().cloned().unwrap() {
-            Task::QueryIssues(t) => self.do_query_issues(config, t)?,
-            Task::QueryIssueComments(t) => self.do_query_issue_comments(config, t)?,
-            Task::ProcessComment(t) => self.do_process_comment(config, t)?,
+            Task::QueryIssues(t) => self.do_query_issues(config, repo_config, t)?,
+            Task::QueryIssueComments(t) => self.do_query_issue_comments(config, repo_config, t)?,
+            Task::ProcessComment(t) => self.do_process_comment(config, repo_config, t)?,
             _ => {}
         }
 
@@ -106,7 +107,12 @@ impl State {
         Ok(())
     }
 
-    fn do_query_issues(&mut self, config: &Config, t: QueryIssuesTask) -> Result<(), Error> {
+    fn do_query_issues(
+        &mut self,
+        config: &Config,
+        repo_config: &RepoConfig,
+        t: QueryIssuesTask,
+    ) -> Result<(), Error> {
         let result = query::updated_issues(
             &config.github_key,
             &config.wg_repo_owner,
@@ -149,6 +155,7 @@ impl State {
     fn do_query_issue_comments(
         &mut self,
         config: &Config,
+        repo_config: &RepoConfig,
         t: QueryIssueCommentsTask,
     ) -> Result<(), Error> {
         let result = query::issue_comments(
@@ -195,7 +202,12 @@ impl State {
         Ok(())
     }
 
-    fn do_process_comment(&mut self, config: &Config, t: ProcessCommentTask) -> Result<(), Error> {
+    fn do_process_comment(
+        &mut self,
+        config: &Config,
+        repo_config: &RepoConfig,
+        t: ProcessCommentTask,
+    ) -> Result<(), Error> {
         const PREFIX: &'static str = "RESOLVED: ";
 
         let resolutions = t

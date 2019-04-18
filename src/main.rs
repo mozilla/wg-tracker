@@ -3,8 +3,10 @@ extern crate serde_derive;
 
 mod config;
 mod query;
+mod repo_config;
 mod state;
 mod tracker;
+mod util;
 
 use clap::{App, Arg};
 use config::Config;
