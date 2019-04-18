@@ -1,6 +1,7 @@
 query IssueComments($repo_owner:String!, $repo_name:String!, $number:Int!, $after:String) {
   repository(owner: $repo_owner, name: $repo_name) {
     issue(number: $number) {
+      title
       comments(first: 10, after: $after) {
         totalCount
         edges {

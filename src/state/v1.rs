@@ -18,6 +18,7 @@ enum Task {
     QueryIssues(QueryIssuesTask),
     QueryIssueComments(QueryIssueCommentsTask),
     ProcessComment(ProcessCommentTask),
+    FileIssue(FileIssueTask),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -37,8 +38,18 @@ struct QueryIssueCommentsTask {
 
 #[derive(Clone, Deserialize, Serialize)]
 struct ProcessCommentTask {
+    issue_number: i64,
+    issue_title: String,
     url: String,
     body_text: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct FileIssueTask {
+    issue_number: i64,
+    issue_title: String,
+    comment_url: String,
+    resolutions: Vec<String>,
 }
 
 impl State {
@@ -87,6 +98,7 @@ impl State {
         match self.tasks.front().cloned().unwrap() {
             Task::QueryIssues(t) => self.do_query_issues(config, t)?,
             Task::QueryIssueComments(t) => self.do_query_issue_comments(config, t)?,
+            Task::ProcessComment(t) => self.do_process_comment(config, t)?,
             _ => {}
         }
 
@@ -147,8 +159,11 @@ impl State {
             t.after.as_ref().map(|s| &**s),
         )?;
 
-        let got_any = !result.comments.is_empty();
+        let since = t.since;
+        let number = t.number;
+        let title = result.issue_title;
         let mut comments = t.so_far;
+        let got_any = !result.comments.is_empty();
         comments.extend(result.comments.into_iter());
         let have_more = comments.len() < result.total_count as usize && got_any;
 
@@ -156,18 +171,55 @@ impl State {
             self.tasks
                 .push_back(Task::QueryIssueComments(QueryIssueCommentsTask {
                     number: t.number,
-                    since: t.since,
+                    since: since,
                     after: comments.last().map(|i| i.cursor.clone()),
                     so_far: comments,
                 }));
             return Ok(());
         }
 
-        self.tasks.extend(comments.into_iter().map(|comment| {
-            Task::ProcessComment(ProcessCommentTask {
-                url: comment.url,
-                body_text: comment.body_text,
-            })
+        self.tasks.extend(
+            comments
+                .into_iter()
+                .filter(|comment| comment.created_at >= since)
+                .map(|comment| {
+                    Task::ProcessComment(ProcessCommentTask {
+                        issue_number: number,
+                        issue_title: title.clone(),
+                        url: comment.url,
+                        body_text: comment.body_text,
+                    })
+                }),
+        );
+
+        Ok(())
+    }
+
+    fn do_process_comment(&mut self, config: &Config, t: ProcessCommentTask) -> Result<(), Error> {
+        const PREFIX: &'static str = "RESOLVED: ";
+
+        let resolutions = t
+            .body_text
+            .lines()
+            .filter(|line| line.starts_with(PREFIX))
+            .map(|line| line[PREFIX.len()..].to_string())
+            .collect::<Vec<_>>();
+
+        if resolutions.is_empty() {
+            return Ok(());
+        }
+
+        if self.handled_comments.contains(&t.url) {
+            return Ok(());
+        }
+
+        self.handled_comments.insert(t.url.clone());
+
+        self.tasks.push_back(Task::FileIssue(FileIssueTask {
+            issue_number: t.issue_number,
+            issue_title: t.issue_title,
+            comment_url: t.url,
+            resolutions,
         }));
 
         Ok(())

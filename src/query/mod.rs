@@ -92,6 +92,7 @@ struct IssueComments;
 #[derive(Debug, Default)]
 pub struct IssueCommentsResult {
     pub total_count: i64,
+    pub issue_title: String,
     pub comments: Vec<IssueComment>,
 }
 
@@ -135,9 +136,10 @@ pub fn issue_comments(
         .ok_or_else(|| format_err!("no data in response"))?;
 
     let mut result: IssueCommentsResult = Default::default();
-    if let Some(comments) = data.repository.and_then(|r| r.issue).map(|i| i.comments) {
-        result.total_count = comments.total_count;
-        if let Some(edges) = comments.edges {
+    if let Some(issue) = data.repository.and_then(|r| r.issue) {
+        result.issue_title = issue.title;
+        result.total_count = issue.comments.total_count;
+        if let Some(edges) = issue.comments.edges {
             for edge in edges.into_iter().flatten() {
                 let cursor = edge.cursor;
                 if let Some(comment) = edge.node {
