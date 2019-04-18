@@ -45,10 +45,11 @@ impl Tracker {
         self.state.check_for_updates();
 
         loop {
-            let still_more = self.state.iterate()?;
+            let result = self.state.iterate(&self.config);
             self.state
                 .save(&self.statefile_path, &self.statefile_temp_path)?;
-            if !still_more {
+            result?;
+            if self.state.is_finished() {
                 return Ok(());
             }
         }

@@ -2,6 +2,7 @@
 extern crate serde_derive;
 
 mod config;
+mod query;
 mod state;
 mod tracker;
 

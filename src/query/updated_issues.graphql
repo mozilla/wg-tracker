@@ -1,0 +1,19 @@
+query UpdatedIssues($repo_owner:String!, $repo_name:String!, $since:DateTime!, $after:String) {
+  repository(owner: $repo_owner, name: $repo_name) {
+    issues(
+      orderBy: {field: UPDATED_AT, direction: ASC},
+      filterBy: {since: $since},
+      first: 100,
+      after: $after,
+    ) {
+      totalCount
+      edges {
+        cursor
+        node {
+          number
+          updatedAt
+        }
+      }
+    }
+  }
+}
