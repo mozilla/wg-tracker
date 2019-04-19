@@ -11,6 +11,7 @@ query UpdatedIssues($repo_owner:String!, $repo_name:String!, $since:DateTime!, $
         cursor
         node {
           number
+          title
           updatedAt
           labels(first: 100) {
             edges {

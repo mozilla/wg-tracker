@@ -129,6 +129,7 @@ impl Task for QueryWGIssuesTask {
         for issue in issues {
             state.post_task(QueryWGIssueCommentsTask {
                 number: issue.issue_number,
+                issue_title: issue.issue_title.clone(),
                 issue_labels: issue.issue_labels,
                 since: self.since.clone(),
                 after: None,
@@ -143,6 +144,7 @@ impl Task for QueryWGIssuesTask {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct QueryWGIssueCommentsTask {
     number: i64,
+    issue_title: String,
     issue_labels: Vec<query::IssueLabel>,
     since: String,
     after: Option<String>,
@@ -165,7 +167,6 @@ impl Task for QueryWGIssueCommentsTask {
             self.after.clone(),
         )?;
 
-        let title = result.issue_title;
         let mut comments = self.so_far.clone();
         let got_any = !result.comments.is_empty();
         comments.extend(result.comments.into_iter());
@@ -174,6 +175,7 @@ impl Task for QueryWGIssueCommentsTask {
         if have_more {
             state.post_task(QueryWGIssueCommentsTask {
                 number: self.number,
+                issue_title: self.issue_title.clone(),
                 issue_labels: self.issue_labels.clone(),
                 since: self.since.clone(),
                 after: comments.last().map(|i| i.cursor.clone()),
@@ -186,7 +188,7 @@ impl Task for QueryWGIssueCommentsTask {
             if comment.created_at >= self.since {
                 state.post_task(ProcessWGCommentTask {
                     issue_number: self.number,
-                    issue_title: title.clone(),
+                    issue_title: self.issue_title.clone(),
                     issue_labels: self.issue_labels.clone(),
                     url: comment.url,
                     body_text: comment.body_text,

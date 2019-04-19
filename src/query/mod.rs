@@ -64,6 +64,7 @@ struct UpdatedIssues;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdatedIssue {
     pub issue_number: i64,
+    pub issue_title: String,
     pub updated_at: String,
     pub issue_labels: Vec<IssueLabel>,
 }
@@ -132,6 +133,7 @@ pub fn updated_issues(
                     }
                     UpdatedIssue {
                         issue_number: n.number,
+                        issue_title: n.title,
                         updated_at: n.updated_at,
                         issue_labels,
                     }
@@ -157,7 +159,6 @@ struct IssueComments;
 #[derive(Debug, Default)]
 pub struct IssueCommentsResult {
     pub total_count: i64,
-    pub issue_title: String,
     pub comments: Vec<IssueComment>,
 }
 
@@ -188,7 +189,6 @@ pub fn issue_comments(
 
     let mut result: IssueCommentsResult = Default::default();
     if let Some(issue) = data.repository.and_then(|r| r.issue) {
-        result.issue_title = issue.title;
         result.total_count = issue.comments.total_count;
         if let Some(edges) = issue.comments.edges {
             for edge in edges.into_iter().flatten() {
