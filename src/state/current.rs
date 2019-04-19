@@ -4,6 +4,7 @@ use crate::repo_config::RepoConfig;
 use crate::util::escape_markdown;
 use failure::{format_err, Error, ResultExt};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::Write;
 use std::mem;
@@ -94,7 +95,7 @@ impl State {
 }
 
 #[typetag::serde(tag = "type")]
-trait Task {
+trait Task : fmt::Debug {
     fn run(
         &self,
         state: &mut State,
@@ -147,6 +148,7 @@ impl Task for QueryWGIssuesTask {
         for issue in issues {
             state.post_task(QueryWGIssueCommentsTask {
                 number: issue.issue_number,
+                issue_labels: issue.issue_labels,
                 since: self.since.clone(),
                 after: None,
                 so_far: Vec::new(),
@@ -160,6 +162,7 @@ impl Task for QueryWGIssuesTask {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct QueryWGIssueCommentsTask {
     number: i64,
+    issue_labels: Vec<query::IssueLabel>,
     since: String,
     after: Option<String>,
     so_far: Vec<query::IssueComment>,
@@ -182,7 +185,6 @@ impl Task for QueryWGIssueCommentsTask {
         )?;
 
         let title = result.issue_title;
-        let labels = result.issue_labels;
         let mut comments = self.so_far.clone();
         let got_any = !result.comments.is_empty();
         comments.extend(result.comments.into_iter());
@@ -191,6 +193,7 @@ impl Task for QueryWGIssueCommentsTask {
         if have_more {
             state.post_task(QueryWGIssueCommentsTask {
                 number: self.number,
+                issue_labels: self.issue_labels.clone(),
                 since: self.since.clone(),
                 after: comments.last().map(|i| i.cursor.clone()),
                 so_far: comments,
@@ -203,7 +206,7 @@ impl Task for QueryWGIssueCommentsTask {
                 state.post_task(ProcessWGCommentTask {
                     issue_number: self.number,
                     issue_title: title.clone(),
-                    issue_labels: labels.clone(),
+                    issue_labels: self.issue_labels.clone(),
                     url: comment.url,
                     body_text: comment.body_text,
                 });
@@ -309,14 +312,10 @@ impl Task for QueryDecisionsKnownLabelsTask {
             &config.decisions_repo_name,
         )?;
 
-        if state.known_labels.is_none() {
-            state.known_labels = Some(HashMap::new());
-        }
-
-        let map = state.known_labels.as_mut().unwrap();
+        let known_labels = state.known_labels.get_or_insert_with(|| HashMap::new());
 
         for label in result {
-            map.insert(label.name, label.id);
+            known_labels.insert(label.name, label.id);
         }
 
         Ok(())

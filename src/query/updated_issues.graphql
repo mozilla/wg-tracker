@@ -12,6 +12,14 @@ query UpdatedIssues($repo_owner:String!, $repo_name:String!, $since:DateTime!, $
         node {
           number
           updatedAt
+          labels(first: 100) {
+            edges {
+              node {
+                name
+                color
+              }
+            }
+          }
         }
       }
     }

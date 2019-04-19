@@ -72,6 +72,13 @@ pub struct UpdatedIssue {
     pub cursor: String,
     pub issue_number: i64,
     pub updated_at: String,
+    pub issue_labels: Vec<IssueLabel>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct IssueLabel {
+    pub name: String,
+    pub color: String,
 }
 
 pub fn updated_issues(
@@ -98,10 +105,24 @@ pub fn updated_issues(
             for edge in edges.into_iter().flatten() {
                 let cursor = edge.cursor;
                 if let Some(issue) = edge.node {
+                    let mut issue_labels = Vec::new();
+                    if let Some(labels) = issue.labels {
+                        if let Some(edges) = labels.edges {
+                            for edge in edges.into_iter().flatten() {
+                                if let Some(label) = edge.node {
+                                    issue_labels.push(IssueLabel {
+                                        name: label.name,
+                                        color: label.color,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     result.issues.push(UpdatedIssue {
                         cursor,
                         issue_number: issue.number,
                         updated_at: issue.updated_at,
+                        issue_labels,
                     });
                 }
             }
@@ -123,14 +144,7 @@ struct IssueComments;
 pub struct IssueCommentsResult {
     pub total_count: i64,
     pub issue_title: String,
-    pub issue_labels: Vec<IssueLabel>,
     pub comments: Vec<IssueComment>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct IssueLabel {
-    pub name: String,
-    pub color: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -161,18 +175,6 @@ pub fn issue_comments(
     let mut result: IssueCommentsResult = Default::default();
     if let Some(issue) = data.repository.and_then(|r| r.issue) {
         result.issue_title = issue.title;
-        if let Some(labels) = issue.labels {
-            if let Some(edges) = labels.edges {
-                for edge in edges.into_iter().flatten() {
-                    if let Some(label) = edge.node {
-                        result.issue_labels.push(IssueLabel {
-                            name: label.name,
-                            color: label.color,
-                        });
-                    }
-                }
-            }
-        }
         result.total_count = issue.comments.total_count;
         if let Some(edges) = issue.comments.edges {
             for edge in edges.into_iter().flatten() {

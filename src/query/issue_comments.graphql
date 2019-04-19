@@ -2,14 +2,6 @@ query IssueComments($repo_owner:String!, $repo_name:String!, $number:Int!, $afte
   repository(owner: $repo_owner, name: $repo_name) {
     issue(number: $number) {
       title
-      labels(first: 100) {
-        edges {
-          node {
-            name
-            color
-          }
-        }
-      }
       comments(first: 10, after: $after) {
         totalCount
         edges {
