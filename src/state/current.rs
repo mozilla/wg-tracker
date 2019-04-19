@@ -93,7 +93,7 @@ impl State {
 }
 
 #[typetag::serde(tag = "type")]
-trait Task : fmt::Debug {
+trait Task: fmt::Debug {
     fn run(
         &self,
         state: &mut State,
@@ -132,8 +132,6 @@ impl Task for QueryWGIssuesTask {
                 issue_title: issue.issue_title.clone(),
                 issue_labels: issue.issue_labels,
                 since: self.since.clone(),
-                after: None,
-                so_far: Vec::new(),
             });
         }
 
@@ -147,8 +145,6 @@ struct QueryWGIssueCommentsTask {
     issue_title: String,
     issue_labels: Vec<query::IssueLabel>,
     since: String,
-    after: Option<String>,
-    so_far: Vec<query::IssueComment>,
 }
 
 #[typetag::serde]
@@ -159,30 +155,12 @@ impl Task for QueryWGIssueCommentsTask {
         config: &Config,
         _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
-        let result = query::issue_comments(
+        let comments = query::issue_comments(
             &config.github_key,
             &config.wg_repo_owner,
             &config.wg_repo_name,
             self.number,
-            self.after.clone(),
         )?;
-
-        let mut comments = self.so_far.clone();
-        let got_any = !result.comments.is_empty();
-        comments.extend(result.comments.into_iter());
-        let have_more = comments.len() < result.total_count as usize && got_any;
-
-        if have_more {
-            state.post_task(QueryWGIssueCommentsTask {
-                number: self.number,
-                issue_title: self.issue_title.clone(),
-                issue_labels: self.issue_labels.clone(),
-                since: self.since.clone(),
-                after: comments.last().map(|i| i.cursor.clone()),
-                so_far: comments,
-            });
-            return Ok(());
-        }
 
         for comment in comments {
             if comment.created_at >= self.since {

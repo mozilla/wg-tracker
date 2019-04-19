@@ -156,15 +156,8 @@ pub fn updated_issues(
 )]
 struct IssueComments;
 
-#[derive(Debug, Default)]
-pub struct IssueCommentsResult {
-    pub total_count: i64,
-    pub comments: Vec<IssueComment>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct IssueComment {
-    pub cursor: String,
     pub url: String,
     pub created_at: String,
     pub body_text: String,
@@ -175,33 +168,56 @@ pub fn issue_comments(
     wg_repo_owner: &str,
     wg_repo_name: &str,
     number: i64,
-    after: Option<String>,
-) -> Result<IssueCommentsResult, Error> {
-    let data = perform_query::<IssueComments>(
-        token,
-        issue_comments::Variables {
-            repo_owner: wg_repo_owner.to_string(),
-            repo_name: wg_repo_name.to_string(),
-            number,
-            after,
-        },
-    )?;
+) -> Result<Vec<IssueComment>, Error> {
+    let mut result = Vec::new();
+    let mut after = None;
+    let mut total_count;
 
-    let mut result: IssueCommentsResult = Default::default();
-    if let Some(issue) = data.repository.and_then(|r| r.issue) {
-        result.total_count = issue.comments.total_count;
-        if let Some(edges) = issue.comments.edges {
-            for edge in edges.into_iter().flatten() {
-                let cursor = edge.cursor;
-                if let Some(comment) = edge.node {
-                    result.comments.push(IssueComment {
-                        cursor,
-                        created_at: comment.created_at,
-                        url: comment.url,
-                        body_text: comment.body_text,
-                    });
-                }
-            }
+    loop {
+        let data = perform_query::<IssueComments>(
+            token,
+            issue_comments::Variables {
+                repo_owner: wg_repo_owner.to_string(),
+                repo_name: wg_repo_name.to_string(),
+                number,
+                after: after.clone(),
+            },
+        )?;
+
+        let comments = data
+            .repository
+            .ok_or_else(|| format_err!("repository not found"))?
+            .issue
+            .ok_or_else(|| format_err!("issue not found"))?
+            .comments;
+
+        total_count = comments.total_count;
+
+        let edges = comments
+            .edges
+            .ok_or_else(|| format_err!("comment edges not found"))?;
+
+        if edges.is_empty() {
+            break;
+        }
+
+        after = edges.last().unwrap().as_ref().map(|e| e.cursor.clone());
+        result.extend(
+            edges
+                .into_iter()
+                .flatten()
+                .flat_map(|e| e.node)
+                .map(|n| {
+                    IssueComment {
+                        created_at: n.created_at,
+                        url: n.url,
+                        body_text: n.body_text,
+                    }
+                })
+        );
+
+        if result.len() >= total_count as usize {
+            break;
         }
     }
 
