@@ -1,4 +1,4 @@
-mod v1;
+mod current;
 
 use failure::{format_err, Error, ResultExt};
 use std::fs::File;
@@ -6,7 +6,7 @@ use std::io::Read;
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
-pub use v1::State;
+pub use current::State;
 
 #[derive(Default)]
 pub struct VersionedState(State);
