@@ -1,0 +1,12 @@
+mutation CreateIssue($repo_id:ID!, $title:String!, $body:String, $labels:[ID!]) {
+  createIssue(input:{
+    repositoryId:$repo_id,
+    body:$body,
+    title:$title,
+    labelIds:$labels,
+  }) {
+    issue {
+      id
+    }
+  }
+}

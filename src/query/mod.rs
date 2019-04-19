@@ -319,4 +319,49 @@ pub fn create_label(token: &str, repo_id: &str, name: &str, color: &str) -> Resu
         .ok_or_else(|| format_err!("label creation failed"))
 }
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/github_schema.graphql",
+    query_path = "src/query/create_issue.graphql",
+    response_derives = "Debug"
+)]
+struct CreateIssue;
+
+pub fn create_issue(
+    token: &str,
+    repo_id: &str,
+    title: String,
+    body: Option<String>,
+    labels: Option<Vec<String>>,
+) -> Result<String, Error> {
+    let q = CreateIssue::build_query(create_issue::Variables {
+        repo_id: repo_id.to_string(),
+        title,
+        body,
+        labels,
+    });
+
+    let response = CLIENT
+        .post(GITHUB_ENDPOINT)
+        .bearer_auth(token)
+        .json(&q)
+        .send()
+        .context("could not perform network request")?
+        .json::<Response<create_issue::ResponseData>>()
+        .context("could not parse response")?;
+
+    if let Some(errors) = response.errors {
+        return Err(format_err!("errors in response: {:?}", errors));
+    }
+
+    let data = response
+        .data
+        .ok_or_else(|| format_err!("no data in response"))?;
+
+    data.create_issue
+        .and_then(|m| m.issue)
+        .map(|i| i.id)
+        .ok_or_else(|| format_err!("issue creation failed"))
+}
+
 const GITHUB_ENDPOINT: &'static str = "https://api.github.com/graphql";

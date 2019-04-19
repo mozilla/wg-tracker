@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::query;
 use crate::repo_config::RepoConfig;
+use crate::util::escape_markdown;
 use failure::{format_err, Error, ResultExt};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
@@ -108,7 +109,7 @@ impl State {
             after: None,
             so_far: Vec::new(),
         });
-        self.post_task(task);
+        self.tasks.push_back(task);
     }
 
     pub fn save(&self, path: &Path, temp_path: &Path) -> Result<(), Error> {
@@ -382,7 +383,7 @@ impl State {
             self.decisions_repo_id.as_ref().unwrap(),
             &t.name,
             &t.color,
-        );
+        )?;
 
         Ok(())
     }
@@ -413,6 +414,71 @@ impl State {
         repo_config: &RepoConfig,
         t: FileIssueTask,
     ) -> Result<(), Error> {
+        if self.known_labels.is_none() {
+            self.post_task(Task::QueryKnownLabels(QueryKnownLabelsTask {
+                so_far: Vec::new(),
+                after: None,
+            }));
+            self.post_task(Task::FileIssue(t));
+            return Ok(());
+        }
+
+        if self.decisions_repo_id.is_none() {
+            self.post_task(Task::QueryDecisionsRepoID);
+            self.post_task(Task::FileIssue(t));
+            return Ok(());
+        }
+
+        let plural = if t.resolutions.len() == 1 {
+            "A resolution was"
+        } else {
+            "Resolutions were"
+        };
+        let issue_url = format!(
+            "https://github.com./{}/{}/issues/{}",
+            config.wg_repo_owner, config.wg_repo_name, t.issue_number,
+        );
+        let body = format!(
+            "{} made for [{}/#{}]({}).\n\
+             \n\
+             **{}**\n\
+             \n\
+             {}\n\
+             \n\
+             [Discussion.]({})\n\
+             \n\
+             ----\n\
+             \n\
+             To file a bug automatically for these resolutions, add the **bug** \
+             label to the issue.\n\
+             \n\
+             If no bug is needed, the issue can be closed.",
+            plural,
+            config.wg_repo_name,
+            t.issue_number,
+            issue_url,
+            escape_markdown(&t.issue_title),
+            t.resolutions
+                .into_iter()
+                .map(|s| format!("* RESOLVED: {}\n", escape_markdown(&s)))
+                .collect::<String>(),
+            t.comment_url,
+        );
+
+        let label_ids = t
+            .issue_labels
+            .into_iter()
+            .flat_map(|s| self.known_labels.as_ref().unwrap().get(&s))
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        let result = query::create_issue(
+            &config.github_key,
+            self.decisions_repo_id.as_ref().unwrap(),
+            t.issue_title,
+            Some(body),
+            Some(label_ids),
+        )?;
+
         Ok(())
     }
 
