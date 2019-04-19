@@ -200,15 +200,8 @@ pub fn issue_comments(
 )]
 struct KnownLabels;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct KnownLabelsResult {
-    pub total_count: i64,
-    pub known_labels: Vec<KnownLabel>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct KnownLabel {
-    pub cursor: String,
     pub id: String,
     pub name: String,
 }
@@ -217,31 +210,48 @@ pub fn known_labels(
     token: &str,
     repo_owner: &str,
     repo_name: &str,
-    after: Option<String>,
-) -> Result<KnownLabelsResult, Error> {
-    let data = perform_query::<KnownLabels>(
-        token,
-        known_labels::Variables {
-            repo_owner: repo_owner.to_string(),
-            repo_name: repo_name.to_string(),
-            after,
-        },
-    )?;
+) -> Result<Vec<KnownLabel>, Error> {
+    let mut result = Vec::new();
+    let mut after = None;
+    let mut total_count;
 
-    let mut result: KnownLabelsResult = Default::default();
-    if let Some(labels) = data.repository.and_then(|r| r.labels) {
-        result.total_count = labels.total_count;
-        if let Some(edges) = labels.edges {
-            for edge in edges.into_iter().flatten() {
-                let cursor = edge.cursor;
-                if let Some(label) = edge.node {
-                    result.known_labels.push(KnownLabel {
-                        cursor,
-                        id: label.id,
-                        name: label.name,
-                    });
-                }
-            }
+    loop {
+        let data = perform_query::<KnownLabels>(
+            token,
+            known_labels::Variables {
+                repo_owner: repo_owner.to_string(),
+                repo_name: repo_name.to_string(),
+                after: after.clone(),
+            },
+        )?;
+
+        let labels = data
+            .repository
+            .ok_or_else(|| format_err!("repository not found"))?
+            .labels
+            .ok_or_else(|| format_err!("labels not found"))?;
+
+        total_count = labels.total_count;
+
+        let edges = labels
+            .edges
+            .ok_or_else(|| format_err!("label edges not found"))?;
+
+        if edges.is_empty() {
+            break;
+        }
+
+        after = edges.last().unwrap().as_ref().map(|e| e.cursor.clone());
+        result.extend(
+            edges
+                .into_iter()
+                .flatten()
+                .flat_map(|e| e.node)
+                .map(|n| KnownLabel { id: n.id, name: n.name }),
+        );
+
+        if result.len() >= total_count as usize {
+            break;
         }
     }
 

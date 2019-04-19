@@ -233,7 +233,8 @@ impl Task for ProcessWGCommentTask {
     ) -> Result<(), Error> {
         const PREFIX: &'static str = "RESOLVED: ";
 
-        let resolutions = self.body_text
+        let resolutions = self
+            .body_text
             .lines()
             .filter(|line| line.starts_with(PREFIX))
             .map(|line| line[PREFIX.len()..].to_string())
@@ -292,10 +293,7 @@ impl Task for ProcessWGCommentTask {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryDecisionsKnownLabelsTask {
-    so_far: Vec<query::KnownLabel>,
-    after: Option<String>,
-}
+struct QueryDecisionsKnownLabelsTask;
 
 #[typetag::serde]
 impl Task for QueryDecisionsKnownLabelsTask {
@@ -309,21 +307,7 @@ impl Task for QueryDecisionsKnownLabelsTask {
             &config.github_key,
             &config.decisions_repo_owner,
             &config.decisions_repo_name,
-            self.after.clone(),
         )?;
-
-        let mut known_labels = self.so_far.clone();
-        let got_any = !result.known_labels.is_empty();
-        known_labels.extend(result.known_labels.into_iter());
-        let have_more = known_labels.len() < result.total_count as usize && got_any;
-
-        if have_more {
-            state.post_task(QueryDecisionsKnownLabelsTask {
-                after: known_labels.last().map(|l| l.cursor.clone()),
-                so_far: known_labels,
-            });
-            return Ok(());
-        }
 
         if state.known_labels.is_none() {
             state.known_labels = Some(HashMap::new());
@@ -331,7 +315,7 @@ impl Task for QueryDecisionsKnownLabelsTask {
 
         let map = state.known_labels.as_mut().unwrap();
 
-        for label in known_labels {
+        for label in result {
             map.insert(label.name, label.id);
         }
 
@@ -354,10 +338,7 @@ impl Task for EnsureLabelTask {
         _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
         if state.known_labels.is_none() {
-            state.post_task(QueryDecisionsKnownLabelsTask {
-                so_far: Vec::new(),
-                after: None,
-            });
+            state.post_task(QueryDecisionsKnownLabelsTask);
             state.post_task(self.clone());
             return Ok(());
         }
@@ -433,10 +414,7 @@ impl Task for FileIssueTask {
         _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
         if state.known_labels.is_none() {
-            state.post_task(QueryDecisionsKnownLabelsTask {
-                so_far: Vec::new(),
-                after: None,
-            });
+            state.post_task(QueryDecisionsKnownLabelsTask);
             state.post_task(self.clone());
             return Ok(());
         }
@@ -480,7 +458,8 @@ impl Task for FileIssueTask {
             self.comment_url,
         );
 
-        let label_ids = self.issue_labels
+        let label_ids = self
+            .issue_labels
             .iter()
             .flat_map(|s| state.known_labels.as_ref().unwrap().get(s))
             .map(|s| s.to_string())
