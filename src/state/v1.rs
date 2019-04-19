@@ -158,7 +158,7 @@ impl State {
             &config.wg_repo_owner,
             &config.wg_repo_name,
             &t.since,
-            t.after.as_ref().map(|s| &**s),
+            t.after,
         )?;
 
         let since = t.since;
@@ -202,7 +202,7 @@ impl State {
             &config.wg_repo_owner,
             &config.wg_repo_name,
             t.number,
-            t.after.as_ref().map(|s| &**s),
+            t.after,
         )?;
 
         let since = t.since;
@@ -317,7 +317,7 @@ impl State {
             &config.github_key,
             &config.decisions_repo_owner,
             &config.decisions_repo_name,
-            t.after.as_ref().map(|s| &**s),
+            t.after,
         )?;
 
         let mut known_labels = t.so_far;

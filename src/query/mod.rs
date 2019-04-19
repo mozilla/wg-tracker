@@ -79,7 +79,7 @@ pub fn updated_issues(
     wg_repo_owner: &str,
     wg_repo_name: &str,
     since: &str,
-    after: Option<&str>,
+    after: Option<String>,
 ) -> Result<UpdatedIssuesResult, Error> {
     let data = perform_query::<UpdatedIssues>(
         token,
@@ -87,7 +87,7 @@ pub fn updated_issues(
             repo_owner: wg_repo_owner.to_string(),
             repo_name: wg_repo_name.to_string(),
             since: since.to_string(),
-            after: after.map(|s| s.to_string()),
+            after,
         },
     )?;
 
@@ -146,7 +146,7 @@ pub fn issue_comments(
     wg_repo_owner: &str,
     wg_repo_name: &str,
     number: i64,
-    after: Option<&str>,
+    after: Option<String>,
 ) -> Result<IssueCommentsResult, Error> {
     let data = perform_query::<IssueComments>(
         token,
@@ -154,7 +154,7 @@ pub fn issue_comments(
             repo_owner: wg_repo_owner.to_string(),
             repo_name: wg_repo_name.to_string(),
             number,
-            after: after.map(|s| s.to_string()),
+            after,
         },
     )?;
 
@@ -217,14 +217,14 @@ pub fn known_labels(
     token: &str,
     repo_owner: &str,
     repo_name: &str,
-    after: Option<&str>,
+    after: Option<String>,
 ) -> Result<KnownLabelsResult, Error> {
     let data = perform_query::<KnownLabels>(
         token,
         known_labels::Variables {
             repo_owner: repo_owner.to_string(),
             repo_name: repo_name.to_string(),
-            after: after.map(|s| s.to_string()),
+            after,
         },
     )?;
 
