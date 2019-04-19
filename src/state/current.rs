@@ -11,76 +11,14 @@ use std::path::Path;
 
 #[derive(Default, Deserialize, Serialize)]
 pub struct State {
-    tasks: VecDeque<Task>,
-    posted_tasks: Vec<Task>,
+    tasks: VecDeque<Box<dyn Task>>,
+    posted_tasks: Vec<Box<dyn Task>>,
     handled_wg_comments: HashSet<String>,
     #[serde(skip)]
     known_labels: Option<HashMap<String, String>>,
     #[serde(skip)]
     decisions_repo_id: Option<String>,
     last_time_wg: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-enum Task {
-    QueryWGIssues(QueryWGIssuesTask),
-    QueryWGIssueComments(QueryWGIssueCommentsTask),
-    ProcessWGComment(ProcessWGCommentTask),
-    QueryDecisionsKnownLabels(QueryDecisionsKnownLabelsTask),
-    QueryDecisionsRepoID,
-    EnsureLabel(EnsureLabelTask),
-    FileIssue(FileIssueTask),
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryWGIssuesTask {
-    since: String,
-    after: Option<String>,
-    so_far: Vec<query::UpdatedIssue>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryWGIssueCommentsTask {
-    number: i64,
-    since: String,
-    after: Option<String>,
-    so_far: Vec<query::IssueComment>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct ProcessWGCommentTask {
-    issue_number: i64,
-    issue_title: String,
-    issue_labels: Vec<query::IssueLabel>,
-    url: String,
-    body_text: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct IssueLabel {
-    name: String,
-    color: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryDecisionsKnownLabelsTask {
-    so_far: Vec<query::KnownLabel>,
-    after: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct EnsureLabelTask {
-    name: String,
-    color: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct FileIssueTask {
-    issue_number: i64,
-    issue_title: String,
-    issue_labels: Vec<String>,
-    comment_url: String,
-    resolutions: Vec<String>,
 }
 
 impl State {
@@ -104,12 +42,12 @@ impl State {
     }
 
     pub fn check_for_updates(&mut self) {
-        let task = Task::QueryWGIssues(QueryWGIssuesTask {
+        let task = QueryWGIssuesTask {
             since: self.last_time_wg.clone(),
             after: None,
             so_far: Vec::new(),
-        });
-        self.tasks.push_back(task);
+        };
+        self.tasks.push_back(Box::new(task));
     }
 
     pub fn save(&self, path: &Path, temp_path: &Path) -> Result<(), Error> {
@@ -136,122 +74,166 @@ impl State {
             return Ok(());
         }
 
-        match dbg!(self.tasks.front().cloned().unwrap()) {
-            Task::QueryWGIssues(t) => self.do_query_wg_issues(config, t)?,
-            Task::QueryWGIssueComments(t) => self.do_query_wg_issue_comments(config, t)?,
-            Task::ProcessWGComment(t) => self.do_process_comment(repo_config, t)?,
-            Task::QueryDecisionsKnownLabels(t) => {
-                self.do_query_decisions_known_labels(config, t)?
-            }
-            Task::QueryDecisionsRepoID => self.do_query_decisions_repo_id(config)?,
-            Task::EnsureLabel(t) => self.do_ensure_label(config, t)?,
-            Task::FileIssue(t) => self.do_file_issue(config, t)?,
+        let task = self.tasks.pop_front().unwrap();
+        let result = task.run(self, config, repo_config);
+
+        if result.is_err() {
+            self.tasks.push_front(task);
         }
 
-        self.tasks.pop_front();
-        Ok(())
+        result
     }
 
-    fn do_query_wg_issues(&mut self, config: &Config, t: QueryWGIssuesTask) -> Result<(), Error> {
+    pub fn is_finished(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    fn post_task<T: Task + 'static>(&mut self, task: T) {
+        self.posted_tasks.push(Box::new(task));
+    }
+}
+
+#[typetag::serde(tag = "type")]
+trait Task {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        repo_config: &RepoConfig,
+    ) -> Result<(), Error>;
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct QueryWGIssuesTask {
+    since: String,
+    after: Option<String>,
+    so_far: Vec<query::UpdatedIssue>,
+}
+
+#[typetag::serde]
+impl Task for QueryWGIssuesTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
         let result = query::updated_issues(
             &config.github_key,
             &config.wg_repo_owner,
             &config.wg_repo_name,
-            &t.since,
-            t.after,
+            &self.since,
+            self.after.clone(),
         )?;
 
-        let since = t.since;
-        let mut issues = t.so_far;
+        let mut issues = self.so_far.clone();
         let got_any = !result.issues.is_empty();
         issues.extend(result.issues.into_iter());
         let have_more = issues.len() < result.total_count as usize && got_any;
 
         if have_more {
-            self.post_task(Task::QueryWGIssues(QueryWGIssuesTask {
-                since,
+            state.post_task(QueryWGIssuesTask {
+                since: self.since.clone(),
                 after: issues.last().map(|i| i.cursor.clone()),
                 so_far: issues,
-            }));
+            });
             return Ok(());
         }
 
         if let Some(issue) = issues.last() {
-            self.last_time_wg = issue.updated_at.clone();
+            state.last_time_wg = issue.updated_at.clone();
         }
 
-        self.tasks.extend(issues.into_iter().map(|issue| {
-            Task::QueryWGIssueComments(QueryWGIssueCommentsTask {
+        for issue in issues {
+            state.post_task(QueryWGIssueCommentsTask {
                 number: issue.issue_number,
-                since: since.clone(),
+                since: self.since.clone(),
                 after: None,
                 so_far: Vec::new(),
-            })
-        }));
+            });
+        }
 
         Ok(())
     }
+}
 
-    fn do_query_wg_issue_comments(
-        &mut self,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct QueryWGIssueCommentsTask {
+    number: i64,
+    since: String,
+    after: Option<String>,
+    so_far: Vec<query::IssueComment>,
+}
+
+#[typetag::serde]
+impl Task for QueryWGIssueCommentsTask {
+    fn run(
+        &self,
+        state: &mut State,
         config: &Config,
-        t: QueryWGIssueCommentsTask,
+        _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
         let result = query::issue_comments(
             &config.github_key,
             &config.wg_repo_owner,
             &config.wg_repo_name,
-            t.number,
-            t.after,
+            self.number,
+            self.after.clone(),
         )?;
 
-        let since = t.since;
-        let number = t.number;
         let title = result.issue_title;
         let labels = result.issue_labels;
-        let mut comments = t.so_far;
+        let mut comments = self.so_far.clone();
         let got_any = !result.comments.is_empty();
         comments.extend(result.comments.into_iter());
         let have_more = comments.len() < result.total_count as usize && got_any;
 
         if have_more {
-            self.tasks
-                .push_back(Task::QueryWGIssueComments(QueryWGIssueCommentsTask {
-                    number: t.number,
-                    since: since,
-                    after: comments.last().map(|i| i.cursor.clone()),
-                    so_far: comments,
-                }));
+            state.post_task(QueryWGIssueCommentsTask {
+                number: self.number,
+                since: self.since.clone(),
+                after: comments.last().map(|i| i.cursor.clone()),
+                so_far: comments,
+            });
             return Ok(());
         }
 
-        self.tasks.extend(
-            comments
-                .into_iter()
-                .filter(|comment| comment.created_at >= since)
-                .map(|comment| {
-                    Task::ProcessWGComment(ProcessWGCommentTask {
-                        issue_number: number,
-                        issue_title: title.clone(),
-                        issue_labels: labels.clone(),
-                        url: comment.url,
-                        body_text: comment.body_text,
-                    })
-                }),
-        );
+        for comment in comments {
+            if comment.created_at >= self.since {
+                state.post_task(ProcessWGCommentTask {
+                    issue_number: self.number,
+                    issue_title: title.clone(),
+                    issue_labels: labels.clone(),
+                    url: comment.url,
+                    body_text: comment.body_text,
+                });
+            }
+        }
 
         Ok(())
     }
+}
 
-    fn do_process_comment(
-        &mut self,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct ProcessWGCommentTask {
+    issue_number: i64,
+    issue_title: String,
+    issue_labels: Vec<query::IssueLabel>,
+    url: String,
+    body_text: String,
+}
+
+#[typetag::serde]
+impl Task for ProcessWGCommentTask {
+    fn run(
+        &self,
+        state: &mut State,
+        _config: &Config,
         repo_config: &RepoConfig,
-        t: ProcessWGCommentTask,
     ) -> Result<(), Error> {
         const PREFIX: &'static str = "RESOLVED: ";
 
-        let resolutions = t
-            .body_text
+        let resolutions = self.body_text
             .lines()
             .filter(|line| line.starts_with(PREFIX))
             .map(|line| line[PREFIX.len()..].to_string())
@@ -261,15 +243,15 @@ impl State {
             return Ok(());
         }
 
-        if self.handled_wg_comments.contains(&t.url) {
+        if state.handled_wg_comments.contains(&self.url) {
             return Ok(());
         }
 
-        self.handled_wg_comments.insert(t.url.clone());
+        state.handled_wg_comments.insert(self.url.clone());
 
         let mut desired_labels = Vec::new();
         if let Some(labels_config) = &repo_config.labels {
-            for label in t.issue_labels {
+            for label in &self.issue_labels {
                 if let Some(color) = &labels_config.color {
                     if label.color == *color {
                         desired_labels.push(label);
@@ -288,58 +270,72 @@ impl State {
         }
 
         for label in &desired_labels {
-            self.post_task(Task::EnsureLabel(EnsureLabelTask {
+            state.post_task(EnsureLabelTask {
                 name: format!("[spec] {}", label.name),
                 color: label.color.clone(),
-            }));
+            });
         }
 
-        self.post_task(Task::FileIssue(FileIssueTask {
-            issue_number: t.issue_number,
-            issue_title: t.issue_title,
+        state.post_task(FileIssueTask {
+            issue_number: self.issue_number,
+            issue_title: self.issue_title.clone(),
             issue_labels: desired_labels
                 .into_iter()
                 .map(|l| format!("[spec] {}", l.name))
                 .collect(),
-            comment_url: t.url,
+            comment_url: self.url.clone(),
             resolutions,
-        }));
+        });
 
         Ok(())
     }
+}
 
-    fn do_query_decisions_known_labels(
-        &mut self,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct IssueLabel {
+    name: String,
+    color: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct QueryDecisionsKnownLabelsTask {
+    so_far: Vec<query::KnownLabel>,
+    after: Option<String>,
+}
+
+#[typetag::serde]
+impl Task for QueryDecisionsKnownLabelsTask {
+    fn run(
+        &self,
+        state: &mut State,
         config: &Config,
-        t: QueryDecisionsKnownLabelsTask,
+        _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
         let result = query::known_labels(
             &config.github_key,
             &config.decisions_repo_owner,
             &config.decisions_repo_name,
-            t.after,
+            self.after.clone(),
         )?;
 
-        let mut known_labels = t.so_far;
+        let mut known_labels = self.so_far.clone();
         let got_any = !result.known_labels.is_empty();
         known_labels.extend(result.known_labels.into_iter());
         let have_more = known_labels.len() < result.total_count as usize && got_any;
 
         if have_more {
-            self.post_task(Task::QueryDecisionsKnownLabels(
-                QueryDecisionsKnownLabelsTask {
-                    after: known_labels.last().map(|l| l.cursor.clone()),
-                    so_far: known_labels,
-                },
-            ));
+            state.post_task(QueryDecisionsKnownLabelsTask {
+                after: known_labels.last().map(|l| l.cursor.clone()),
+                so_far: known_labels,
+            });
             return Ok(());
         }
 
-        if self.known_labels.is_none() {
-            self.known_labels = Some(HashMap::new());
+        if state.known_labels.is_none() {
+            state.known_labels = Some(HashMap::new());
         }
 
-        let map = self.known_labels.as_mut().unwrap();
+        let map = state.known_labels.as_mut().unwrap();
 
         for label in known_labels {
             map.insert(label.name, label.id);
@@ -347,40 +343,68 @@ impl State {
 
         Ok(())
     }
+}
 
-    fn do_ensure_label(&mut self, config: &Config, t: EnsureLabelTask) -> Result<(), Error> {
-        if self.known_labels.is_none() {
-            self.post_task(Task::QueryDecisionsKnownLabels(
-                QueryDecisionsKnownLabelsTask {
-                    so_far: Vec::new(),
-                    after: None,
-                },
-            ));
-            self.post_task(Task::EnsureLabel(t));
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct EnsureLabelTask {
+    name: String,
+    color: String,
+}
+
+#[typetag::serde]
+impl Task for EnsureLabelTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        if state.known_labels.is_none() {
+            state.post_task(QueryDecisionsKnownLabelsTask {
+                so_far: Vec::new(),
+                after: None,
+            });
+            state.post_task(self.clone());
             return Ok(());
         }
 
-        if self.decisions_repo_id.is_none() {
-            self.post_task(Task::QueryDecisionsRepoID);
-            self.post_task(Task::EnsureLabel(t));
+        if state.decisions_repo_id.is_none() {
+            state.post_task(QueryDecisionsRepoID);
+            state.post_task(self.clone());
             return Ok(());
         }
 
-        if self.known_labels.as_ref().unwrap().contains_key(&t.name) {
+        if state
+            .known_labels
+            .as_ref()
+            .unwrap()
+            .contains_key(&self.name)
+        {
             return Ok(());
         }
 
         query::create_label(
             &config.github_key,
-            self.decisions_repo_id.as_ref().unwrap(),
-            &t.name,
-            &t.color,
+            state.decisions_repo_id.as_ref().unwrap(),
+            &self.name,
+            &self.color,
         )?;
 
         Ok(())
     }
+}
 
-    fn do_query_decisions_repo_id(&mut self, config: &Config) -> Result<(), Error> {
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct QueryDecisionsRepoID;
+
+#[typetag::serde]
+impl Task for QueryDecisionsRepoID {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
         let result = query::repo_id(
             &config.github_key,
             &config.decisions_repo_owner,
@@ -391,35 +415,50 @@ impl State {
             return Err(format_err!("repository not found"));
         }
 
-        self.decisions_repo_id = result;
+        state.decisions_repo_id = result;
 
         Ok(())
     }
+}
 
-    fn do_file_issue(&mut self, config: &Config, t: FileIssueTask) -> Result<(), Error> {
-        if self.known_labels.is_none() {
-            self.post_task(Task::QueryDecisionsKnownLabels(
-                QueryDecisionsKnownLabelsTask {
-                    so_far: Vec::new(),
-                    after: None,
-                },
-            ));
-            self.post_task(Task::FileIssue(t));
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct FileIssueTask {
+    issue_number: i64,
+    issue_title: String,
+    issue_labels: Vec<String>,
+    comment_url: String,
+    resolutions: Vec<String>,
+}
+
+#[typetag::serde]
+impl Task for FileIssueTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        if state.known_labels.is_none() {
+            state.post_task(QueryDecisionsKnownLabelsTask {
+                so_far: Vec::new(),
+                after: None,
+            });
+            state.post_task(self.clone());
             return Ok(());
         }
 
-        if self.decisions_repo_id.is_none() {
-            self.post_task(Task::QueryDecisionsRepoID);
-            self.post_task(Task::FileIssue(t));
+        if state.decisions_repo_id.is_none() {
+            state.post_task(QueryDecisionsRepoID);
+            state.post_task(self.clone());
             return Ok(());
         }
 
-        let plural = if t.resolutions.len() == 1 {
+        let plural = if self.resolutions.len() == 1 {
             "A resolution was"
         } else {
             "Resolutions were"
         };
-        let issue_url = format!("{}/issues/{}", config.wg_repo_url(), t.issue_number,);
+        let issue_url = format!("{}/issues/{}", config.wg_repo_url(), self.issue_number);
         let body = format!(
             "{} made for [{}/#{}]({}).\n\
              \n\
@@ -437,39 +476,30 @@ impl State {
              If no bug is needed, the issue can be closed.",
             plural,
             config.wg_repo_name,
-            t.issue_number,
+            self.issue_number,
             issue_url,
-            escape_markdown(&t.issue_title),
-            t.resolutions
-                .into_iter()
+            escape_markdown(&self.issue_title),
+            self.resolutions
+                .iter()
                 .map(|s| format!("* RESOLVED: {}\n", escape_markdown(&s)))
                 .collect::<String>(),
-            t.comment_url,
+            self.comment_url,
         );
 
-        let label_ids = t
-            .issue_labels
-            .into_iter()
-            .flat_map(|s| self.known_labels.as_ref().unwrap().get(&s))
+        let label_ids = self.issue_labels
+            .iter()
+            .flat_map(|s| state.known_labels.as_ref().unwrap().get(s))
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
 
         query::create_issue(
             &config.github_key,
-            self.decisions_repo_id.as_ref().unwrap(),
-            t.issue_title,
+            state.decisions_repo_id.as_ref().unwrap(),
+            self.issue_title.clone(),
             Some(body),
             Some(label_ids),
         )?;
 
         Ok(())
-    }
-
-    pub fn is_finished(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
-    fn post_task(&mut self, task: Task) {
-        self.posted_tasks.push(task);
     }
 }
