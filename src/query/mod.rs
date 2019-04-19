@@ -53,11 +53,92 @@ where
     do_perform_query::<Q>(token, Some(mime_type), variables)
 }
 
+trait PaginatedQueryBase: GraphQLQuery {
+    type Edge: EdgeCursor;
+    type Item;
+
+    fn get_total_and_edges(data: Self::ResponseData) -> Option<(i64, Vec<Option<Self::Edge>>)>;
+}
+
+trait PaginatedQuery: PaginatedQueryBase {
+    fn make_item(edge: Self::Edge) -> Option<Self::Item>;
+}
+
+trait EdgeCursor {
+    fn cursor(&self) -> String;
+}
+
+trait PaginatedQueryVariables {
+    fn clone_with_after(&self, after: Option<String>) -> Self;
+}
+
+macro_rules! paginated_query {
+    (
+        query => $ty:ty,
+        item => $item:ty,
+        edges => $edges:ty,
+        path => ($($path:tt)+),
+    ) => {
+        impl EdgeCursor for $edges {
+            fn cursor(&self) -> String {
+                self.cursor.clone()
+            }
+        }
+
+        impl PaginatedQueryVariables for <$ty as GraphQLQuery>::Variables {
+            fn clone_with_after(&self, after: Option<String>) -> Self {
+                let mut v = self.clone();
+                v.after = after.clone();
+                v
+            }
+        }
+
+        impl PaginatedQueryBase for $ty {
+            type Edge = $edges;
+            type Item = $item;
+
+            fn get_total_and_edges(
+                data: <Self as GraphQLQuery>::ResponseData,
+            ) -> Option<(i64, Vec<Option<Self::Edge>>)> {
+                let items = data.$($path)+;
+                Some((items.total_count, items.edges?))
+            }
+        }
+    };
+}
+
+fn perform_paginated_query<P>(token: &str, variables: P::Variables) -> Result<Vec<P::Item>, Error>
+where
+    P: PaginatedQuery,
+    P::Variables: PaginatedQueryVariables,
+{
+    let mut result = Vec::new();
+    let mut after = None;
+    let mut total_count;
+
+    loop {
+        let response_data = perform_query::<P>(token, variables.clone_with_after(after))?;
+        let (count, edges) = P::get_total_and_edges(response_data)
+            .ok_or_else(|| format_err!("error parsing paginated query response"))?;
+        if edges.is_empty() {
+            break;
+        }
+        total_count = count;
+        after = edges.last().unwrap().as_ref().map(|e| e.cursor());
+        result.extend(edges.into_iter().flatten().map(P::make_item).flatten());
+        if result.len() >= total_count as usize {
+            break;
+        }
+    }
+
+    Ok(result)
+}
+
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/github_schema.graphql",
     query_path = "src/query/updated_issues.graphql",
-    response_derives = "Debug"
+    response_derives = "Clone, Debug"
 )]
 struct UpdatedIssues;
 
@@ -75,83 +156,59 @@ pub struct IssueLabel {
     pub color: String,
 }
 
+paginated_query! {
+    query => UpdatedIssues,
+    item => UpdatedIssue,
+    edges => updated_issues::UpdatedIssuesRepositoryIssuesEdges,
+    path => (repository?.issues),
+}
+
+impl PaginatedQuery for UpdatedIssues {
+    fn make_item(edge: Self::Edge) -> Option<Self::Item> {
+        edge.node.map(|issue| {
+            UpdatedIssue {
+                issue_number: issue.number,
+                issue_title: issue.title,
+                updated_at: issue.updated_at,
+                issue_labels: {
+                    issue.labels
+                        .and_then(|x| x.edges)
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|e| e?.node)
+                        .map(|label| IssueLabel {
+                            name: label.name,
+                            color: label.color,
+                        })
+                        .collect()
+                }
+            }
+        })
+    }
+}
+
 pub fn updated_issues(
     token: &str,
     wg_repo_owner: &str,
     wg_repo_name: &str,
     since: &str,
 ) -> Result<Vec<UpdatedIssue>, Error> {
-    let mut result = Vec::new();
-    let mut after = None;
-    let mut total_count;
-
-    loop {
-        let data = perform_query::<UpdatedIssues>(
-            token,
-            updated_issues::Variables {
-                repo_owner: wg_repo_owner.to_string(),
-                repo_name: wg_repo_name.to_string(),
-                since: since.to_string(),
-                after: after.clone(),
-            },
-        )?;
-
-        let issues = data
-            .repository
-            .ok_or_else(|| format_err!("repository not found"))?
-            .issues;
-
-        total_count = issues.total_count;
-
-        let edges = issues
-            .edges
-            .ok_or_else(|| format_err!("issue edges not found"))?;
-
-        if edges.is_empty() {
-            break;
-        }
-
-        after = edges.last().unwrap().as_ref().map(|e| e.cursor.clone());
-        result.extend(
-            edges
-                .into_iter()
-                .flatten()
-                .flat_map(|e| e.node)
-                .map(|issue| {
-                    let issue_labels = issue
-                        .labels
-                        .and_then(|l| l.edges)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .flatten()
-                        .flat_map(|e| e.node)
-                        .map(|label| IssueLabel {
-                            name: label.name,
-                            color: label.color,
-                        })
-                        .collect();
-                    UpdatedIssue {
-                        issue_number: issue.number,
-                        issue_title: issue.title,
-                        updated_at: issue.updated_at,
-                        issue_labels,
-                    }
-                }),
-        );
-
-        if result.len() >= total_count as usize {
-            break;
-        }
-    }
-
-    Ok(result)
+    perform_paginated_query::<UpdatedIssues>(
+        token,
+        updated_issues::Variables {
+            repo_owner: wg_repo_owner.to_string(),
+            repo_name: wg_repo_name.to_string(),
+            since: since.to_string(),
+            after: None,
+        },
+    )
 }
 
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/github_schema.graphql",
     query_path = "src/query/issue_comments.graphql",
-    response_derives = "Debug"
+    response_derives = "Clone, Debug"
 )]
 struct IssueComments;
 
@@ -162,70 +219,45 @@ pub struct IssueComment {
     pub body_text: String,
 }
 
+paginated_query! {
+    query => IssueComments,
+    item => IssueComment,
+    edges => issue_comments::IssueCommentsRepositoryIssueCommentsEdges,
+    path => (repository?.issue?.comments),
+}
+
+impl PaginatedQuery for IssueComments {
+    fn make_item(edge: Self::Edge) -> Option<Self::Item> {
+        edge.node.map(|n| IssueComment {
+            created_at: n.created_at,
+            url: n.url,
+            body_text: n.body_text,
+        })
+    }
+}
+
 pub fn issue_comments(
     token: &str,
     wg_repo_owner: &str,
     wg_repo_name: &str,
     number: i64,
 ) -> Result<Vec<IssueComment>, Error> {
-    let mut result = Vec::new();
-    let mut after = None;
-    let mut total_count;
-
-    loop {
-        let data = perform_query::<IssueComments>(
-            token,
-            issue_comments::Variables {
-                repo_owner: wg_repo_owner.to_string(),
-                repo_name: wg_repo_name.to_string(),
-                number,
-                after: after.clone(),
-            },
-        )?;
-
-        let comments = data
-            .repository
-            .ok_or_else(|| format_err!("repository not found"))?
-            .issue
-            .ok_or_else(|| format_err!("issue not found"))?
-            .comments;
-
-        total_count = comments.total_count;
-
-        let edges = comments
-            .edges
-            .ok_or_else(|| format_err!("comment edges not found"))?;
-
-        if edges.is_empty() {
-            break;
-        }
-
-        after = edges.last().unwrap().as_ref().map(|e| e.cursor.clone());
-        result.extend(
-            edges
-                .into_iter()
-                .flatten()
-                .flat_map(|e| e.node)
-                .map(|n| IssueComment {
-                    created_at: n.created_at,
-                    url: n.url,
-                    body_text: n.body_text,
-                }),
-        );
-
-        if result.len() >= total_count as usize {
-            break;
-        }
-    }
-
-    Ok(result)
+    perform_paginated_query::<IssueComments>(
+        token,
+        issue_comments::Variables {
+            repo_owner: wg_repo_owner.to_string(),
+            repo_name: wg_repo_name.to_string(),
+            number,
+            after: None,
+        },
+    )
 }
 
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/github_schema.graphql",
     query_path = "src/query/known_labels.graphql",
-    response_derives = "Debug"
+    response_derives = "Clone, Debug"
 )]
 struct KnownLabels;
 
@@ -235,59 +267,35 @@ pub struct KnownLabel {
     pub name: String,
 }
 
+paginated_query! {
+    query => KnownLabels,
+    item => KnownLabel,
+    edges => known_labels::KnownLabelsRepositoryLabelsEdges,
+    path => (repository?.labels?),
+}
+
+impl PaginatedQuery for KnownLabels {
+    fn make_item(edge: Self::Edge) -> Option<Self::Item> {
+        edge.node.map(|n| KnownLabel {
+            id: n.id,
+            name: n.name,
+        })
+    }
+}
+
 pub fn known_labels(
     token: &str,
     repo_owner: &str,
     repo_name: &str,
 ) -> Result<Vec<KnownLabel>, Error> {
-    let mut result = Vec::new();
-    let mut after = None;
-    let mut total_count;
-
-    loop {
-        let data = perform_query::<KnownLabels>(
-            token,
-            known_labels::Variables {
-                repo_owner: repo_owner.to_string(),
-                repo_name: repo_name.to_string(),
-                after: after.clone(),
-            },
-        )?;
-
-        let labels = data
-            .repository
-            .ok_or_else(|| format_err!("repository not found"))?
-            .labels
-            .ok_or_else(|| format_err!("labels not found"))?;
-
-        total_count = labels.total_count;
-
-        let edges = labels
-            .edges
-            .ok_or_else(|| format_err!("label edges not found"))?;
-
-        if edges.is_empty() {
-            break;
-        }
-
-        after = edges.last().unwrap().as_ref().map(|e| e.cursor.clone());
-        result.extend(
-            edges
-                .into_iter()
-                .flatten()
-                .flat_map(|e| e.node)
-                .map(|n| KnownLabel {
-                    id: n.id,
-                    name: n.name,
-                }),
-        );
-
-        if result.len() >= total_count as usize {
-            break;
-        }
-    }
-
-    Ok(result)
+    perform_paginated_query::<KnownLabels>(
+        token,
+        known_labels::Variables {
+            repo_owner: repo_owner.to_string(),
+            repo_name: repo_name.to_string(),
+            after: None,
+        },
+    )
 }
 
 #[derive(GraphQLQuery)]
