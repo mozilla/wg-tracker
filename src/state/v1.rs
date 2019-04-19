@@ -13,34 +13,34 @@ use std::path::Path;
 pub struct State {
     tasks: VecDeque<Task>,
     posted_tasks: Vec<Task>,
-    handled_comments: HashSet<String>,
+    handled_wg_comments: HashSet<String>,
     #[serde(skip)]
     known_labels: Option<HashMap<String, String>>,
     #[serde(skip)]
     decisions_repo_id: Option<String>,
-    last_time: String,
+    last_time_wg: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 enum Task {
-    QueryIssues(QueryIssuesTask),
-    QueryIssueComments(QueryIssueCommentsTask),
-    ProcessComment(ProcessCommentTask),
-    QueryKnownLabels(QueryKnownLabelsTask),
+    QueryWGIssues(QueryWGIssuesTask),
+    QueryWGIssueComments(QueryWGIssueCommentsTask),
+    ProcessWGComment(ProcessWGCommentTask),
+    QueryDecisionsKnownLabels(QueryDecisionsKnownLabelsTask),
     QueryDecisionsRepoID,
     EnsureLabel(EnsureLabelTask),
     FileIssue(FileIssueTask),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryIssuesTask {
+struct QueryWGIssuesTask {
     since: String,
     after: Option<String>,
     so_far: Vec<query::UpdatedIssue>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryIssueCommentsTask {
+struct QueryWGIssueCommentsTask {
     number: i64,
     since: String,
     after: Option<String>,
@@ -48,7 +48,7 @@ struct QueryIssueCommentsTask {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct ProcessCommentTask {
+struct ProcessWGCommentTask {
     issue_number: i64,
     issue_title: String,
     issue_labels: Vec<query::IssueLabel>,
@@ -63,7 +63,7 @@ struct IssueLabel {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct QueryKnownLabelsTask {
+struct QueryDecisionsKnownLabelsTask {
     so_far: Vec<query::KnownLabel>,
     after: Option<String>,
 }
@@ -88,10 +88,10 @@ impl State {
         State {
             tasks: VecDeque::new(),
             posted_tasks: Vec::new(),
-            handled_comments: HashSet::new(),
+            handled_wg_comments: HashSet::new(),
             known_labels: None,
             decisions_repo_id: None,
-            last_time: format!("{}T00:00:00Z", date),
+            last_time_wg: format!("{}T00:00:00Z", date),
         }
     }
 
@@ -104,8 +104,8 @@ impl State {
     }
 
     pub fn check_for_updates(&mut self) {
-        let task = Task::QueryIssues(QueryIssuesTask {
-            since: self.last_time.clone(),
+        let task = Task::QueryWGIssues(QueryWGIssuesTask {
+            since: self.last_time_wg.clone(),
             after: None,
             so_far: Vec::new(),
         });
@@ -137,10 +137,14 @@ impl State {
         }
 
         match dbg!(self.tasks.front().cloned().unwrap()) {
-            Task::QueryIssues(t) => self.do_query_issues(config, repo_config, t)?,
-            Task::QueryIssueComments(t) => self.do_query_issue_comments(config, repo_config, t)?,
-            Task::ProcessComment(t) => self.do_process_comment(config, repo_config, t)?,
-            Task::QueryKnownLabels(t) => self.do_query_known_labels(config, repo_config, t)?,
+            Task::QueryWGIssues(t) => self.do_query_wg_issues(config, repo_config, t)?,
+            Task::QueryWGIssueComments(t) => {
+                self.do_query_wg_issue_comments(config, repo_config, t)?
+            }
+            Task::ProcessWGComment(t) => self.do_process_comment(config, repo_config, t)?,
+            Task::QueryDecisionsKnownLabels(t) => {
+                self.do_query_decisions_known_labels(config, repo_config, t)?
+            }
             Task::QueryDecisionsRepoID => self.do_query_decisions_repo_id(config, repo_config)?,
             Task::EnsureLabel(t) => self.do_ensure_label(config, repo_config, t)?,
             Task::FileIssue(t) => self.do_file_issue(config, repo_config, t)?,
@@ -151,11 +155,11 @@ impl State {
         Ok(())
     }
 
-    fn do_query_issues(
+    fn do_query_wg_issues(
         &mut self,
         config: &Config,
         repo_config: &RepoConfig,
-        t: QueryIssuesTask,
+        t: QueryWGIssuesTask,
     ) -> Result<(), Error> {
         let result = query::updated_issues(
             &config.github_key,
@@ -172,7 +176,7 @@ impl State {
         let have_more = issues.len() < result.total_count as usize && got_any;
 
         if have_more {
-            self.post_task(Task::QueryIssues(QueryIssuesTask {
+            self.post_task(Task::QueryWGIssues(QueryWGIssuesTask {
                 since,
                 after: issues.last().map(|i| i.cursor.clone()),
                 so_far: issues,
@@ -181,11 +185,11 @@ impl State {
         }
 
         if let Some(issue) = issues.last() {
-            self.last_time = issue.updated_at.clone();
+            self.last_time_wg = issue.updated_at.clone();
         }
 
         self.tasks.extend(issues.into_iter().map(|issue| {
-            Task::QueryIssueComments(QueryIssueCommentsTask {
+            Task::QueryWGIssueComments(QueryWGIssueCommentsTask {
                 number: issue.issue_number,
                 since: since.clone(),
                 after: None,
@@ -196,11 +200,11 @@ impl State {
         Ok(())
     }
 
-    fn do_query_issue_comments(
+    fn do_query_wg_issue_comments(
         &mut self,
         config: &Config,
         repo_config: &RepoConfig,
-        t: QueryIssueCommentsTask,
+        t: QueryWGIssueCommentsTask,
     ) -> Result<(), Error> {
         let result = query::issue_comments(
             &config.github_key,
@@ -221,7 +225,7 @@ impl State {
 
         if have_more {
             self.tasks
-                .push_back(Task::QueryIssueComments(QueryIssueCommentsTask {
+                .push_back(Task::QueryWGIssueComments(QueryWGIssueCommentsTask {
                     number: t.number,
                     since: since,
                     after: comments.last().map(|i| i.cursor.clone()),
@@ -235,7 +239,7 @@ impl State {
                 .into_iter()
                 .filter(|comment| comment.created_at >= since)
                 .map(|comment| {
-                    Task::ProcessComment(ProcessCommentTask {
+                    Task::ProcessWGComment(ProcessWGCommentTask {
                         issue_number: number,
                         issue_title: title.clone(),
                         issue_labels: labels.clone(),
@@ -252,7 +256,7 @@ impl State {
         &mut self,
         config: &Config,
         repo_config: &RepoConfig,
-        t: ProcessCommentTask,
+        t: ProcessWGCommentTask,
     ) -> Result<(), Error> {
         const PREFIX: &'static str = "RESOLVED: ";
 
@@ -267,11 +271,11 @@ impl State {
             return Ok(());
         }
 
-        if self.handled_comments.contains(&t.url) {
+        if self.handled_wg_comments.contains(&t.url) {
             return Ok(());
         }
 
-        self.handled_comments.insert(t.url.clone());
+        self.handled_wg_comments.insert(t.url.clone());
 
         let mut desired_labels = Vec::new();
         if let Some(labels_config) = &repo_config.labels {
@@ -314,11 +318,11 @@ impl State {
         Ok(())
     }
 
-    fn do_query_known_labels(
+    fn do_query_decisions_known_labels(
         &mut self,
         config: &Config,
         repo_config: &RepoConfig,
-        t: QueryKnownLabelsTask,
+        t: QueryDecisionsKnownLabelsTask,
     ) -> Result<(), Error> {
         let result = query::known_labels(
             &config.github_key,
@@ -333,10 +337,12 @@ impl State {
         let have_more = known_labels.len() < result.total_count as usize && got_any;
 
         if have_more {
-            self.post_task(Task::QueryKnownLabels(QueryKnownLabelsTask {
-                after: known_labels.last().map(|l| l.cursor.clone()),
-                so_far: known_labels,
-            }));
+            self.post_task(Task::QueryDecisionsKnownLabels(
+                QueryDecisionsKnownLabelsTask {
+                    after: known_labels.last().map(|l| l.cursor.clone()),
+                    so_far: known_labels,
+                },
+            ));
             return Ok(());
         }
 
@@ -360,10 +366,12 @@ impl State {
         t: EnsureLabelTask,
     ) -> Result<(), Error> {
         if self.known_labels.is_none() {
-            self.post_task(Task::QueryKnownLabels(QueryKnownLabelsTask {
-                so_far: Vec::new(),
-                after: None,
-            }));
+            self.post_task(Task::QueryDecisionsKnownLabels(
+                QueryDecisionsKnownLabelsTask {
+                    so_far: Vec::new(),
+                    after: None,
+                },
+            ));
             self.post_task(Task::EnsureLabel(t));
             return Ok(());
         }
@@ -415,10 +423,12 @@ impl State {
         t: FileIssueTask,
     ) -> Result<(), Error> {
         if self.known_labels.is_none() {
-            self.post_task(Task::QueryKnownLabels(QueryKnownLabelsTask {
-                so_far: Vec::new(),
-                after: None,
-            }));
+            self.post_task(Task::QueryDecisionsKnownLabels(
+                QueryDecisionsKnownLabelsTask {
+                    so_far: Vec::new(),
+                    after: None,
+                },
+            ));
             self.post_task(Task::FileIssue(t));
             return Ok(());
         }
