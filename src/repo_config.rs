@@ -1,4 +1,4 @@
-use failure::{format_err, Error, ResultExt};
+use failure::{Error, ResultExt};
 use std::collections::HashMap;
 
 #[derive(Debug, Default, Deserialize)]

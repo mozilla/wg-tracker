@@ -1,10 +1,6 @@
 use crate::util::CLIENT;
 use failure::{format_err, Error, ResultExt};
 use graphql_client::*;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use serde_json::json;
-use std::fmt;
 
 type DateTime = String;
 type URI = String;

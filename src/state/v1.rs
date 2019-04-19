@@ -137,30 +137,22 @@ impl State {
         }
 
         match dbg!(self.tasks.front().cloned().unwrap()) {
-            Task::QueryWGIssues(t) => self.do_query_wg_issues(config, repo_config, t)?,
-            Task::QueryWGIssueComments(t) => {
-                self.do_query_wg_issue_comments(config, repo_config, t)?
-            }
-            Task::ProcessWGComment(t) => self.do_process_comment(config, repo_config, t)?,
+            Task::QueryWGIssues(t) => self.do_query_wg_issues(config, t)?,
+            Task::QueryWGIssueComments(t) => self.do_query_wg_issue_comments(config, t)?,
+            Task::ProcessWGComment(t) => self.do_process_comment(repo_config, t)?,
             Task::QueryDecisionsKnownLabels(t) => {
-                self.do_query_decisions_known_labels(config, repo_config, t)?
+                self.do_query_decisions_known_labels(config, t)?
             }
-            Task::QueryDecisionsRepoID => self.do_query_decisions_repo_id(config, repo_config)?,
-            Task::EnsureLabel(t) => self.do_ensure_label(config, repo_config, t)?,
-            Task::FileIssue(t) => self.do_file_issue(config, repo_config, t)?,
-            _ => {}
+            Task::QueryDecisionsRepoID => self.do_query_decisions_repo_id(config)?,
+            Task::EnsureLabel(t) => self.do_ensure_label(config, t)?,
+            Task::FileIssue(t) => self.do_file_issue(config, t)?,
         }
 
         self.tasks.pop_front();
         Ok(())
     }
 
-    fn do_query_wg_issues(
-        &mut self,
-        config: &Config,
-        repo_config: &RepoConfig,
-        t: QueryWGIssuesTask,
-    ) -> Result<(), Error> {
+    fn do_query_wg_issues(&mut self, config: &Config, t: QueryWGIssuesTask) -> Result<(), Error> {
         let result = query::updated_issues(
             &config.github_key,
             &config.wg_repo_owner,
@@ -203,7 +195,6 @@ impl State {
     fn do_query_wg_issue_comments(
         &mut self,
         config: &Config,
-        repo_config: &RepoConfig,
         t: QueryWGIssueCommentsTask,
     ) -> Result<(), Error> {
         let result = query::issue_comments(
@@ -254,7 +245,6 @@ impl State {
 
     fn do_process_comment(
         &mut self,
-        config: &Config,
         repo_config: &RepoConfig,
         t: ProcessWGCommentTask,
     ) -> Result<(), Error> {
@@ -321,7 +311,6 @@ impl State {
     fn do_query_decisions_known_labels(
         &mut self,
         config: &Config,
-        repo_config: &RepoConfig,
         t: QueryDecisionsKnownLabelsTask,
     ) -> Result<(), Error> {
         let result = query::known_labels(
@@ -359,12 +348,7 @@ impl State {
         Ok(())
     }
 
-    fn do_ensure_label(
-        &mut self,
-        config: &Config,
-        repo_config: &RepoConfig,
-        t: EnsureLabelTask,
-    ) -> Result<(), Error> {
+    fn do_ensure_label(&mut self, config: &Config, t: EnsureLabelTask) -> Result<(), Error> {
         if self.known_labels.is_none() {
             self.post_task(Task::QueryDecisionsKnownLabels(
                 QueryDecisionsKnownLabelsTask {
@@ -386,7 +370,7 @@ impl State {
             return Ok(());
         }
 
-        let result = query::create_label(
+        query::create_label(
             &config.github_key,
             self.decisions_repo_id.as_ref().unwrap(),
             &t.name,
@@ -396,11 +380,7 @@ impl State {
         Ok(())
     }
 
-    fn do_query_decisions_repo_id(
-        &mut self,
-        config: &Config,
-        repo_config: &RepoConfig,
-    ) -> Result<(), Error> {
+    fn do_query_decisions_repo_id(&mut self, config: &Config) -> Result<(), Error> {
         let result = query::repo_id(
             &config.github_key,
             &config.decisions_repo_owner,
@@ -416,12 +396,7 @@ impl State {
         Ok(())
     }
 
-    fn do_file_issue(
-        &mut self,
-        config: &Config,
-        repo_config: &RepoConfig,
-        t: FileIssueTask,
-    ) -> Result<(), Error> {
+    fn do_file_issue(&mut self, config: &Config, t: FileIssueTask) -> Result<(), Error> {
         if self.known_labels.is_none() {
             self.post_task(Task::QueryDecisionsKnownLabels(
                 QueryDecisionsKnownLabelsTask {
@@ -445,8 +420,9 @@ impl State {
             "Resolutions were"
         };
         let issue_url = format!(
-            "https://github.com./{}/{}/issues/{}",
-            config.wg_repo_owner, config.wg_repo_name, t.issue_number,
+            "{}/issues/{}",
+            config.wg_repo_url(),
+            t.issue_number,
         );
         let body = format!(
             "{} made for [{}/#{}]({}).\n\
@@ -481,7 +457,8 @@ impl State {
             .flat_map(|s| self.known_labels.as_ref().unwrap().get(&s))
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
-        let result = query::create_issue(
+
+        query::create_issue(
             &config.github_key,
             self.decisions_repo_id.as_ref().unwrap(),
             t.issue_title,
