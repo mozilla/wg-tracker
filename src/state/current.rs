@@ -45,8 +45,6 @@ impl State {
     pub fn check_for_updates(&mut self) {
         let task = QueryWGIssuesTask {
             since: self.last_time_wg.clone(),
-            after: None,
-            so_far: Vec::new(),
         };
         self.tasks.push_back(Box::new(task));
     }
@@ -107,8 +105,6 @@ trait Task : fmt::Debug {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct QueryWGIssuesTask {
     since: String,
-    after: Option<String>,
-    so_far: Vec<query::UpdatedIssue>,
 }
 
 #[typetag::serde]
@@ -119,27 +115,12 @@ impl Task for QueryWGIssuesTask {
         config: &Config,
         _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
-        let result = query::updated_issues(
+        let issues = query::updated_issues(
             &config.github_key,
             &config.wg_repo_owner,
             &config.wg_repo_name,
             &self.since,
-            self.after.clone(),
         )?;
-
-        let mut issues = self.so_far.clone();
-        let got_any = !result.issues.is_empty();
-        issues.extend(result.issues.into_iter());
-        let have_more = issues.len() < result.total_count as usize && got_any;
-
-        if have_more {
-            state.post_task(QueryWGIssuesTask {
-                since: self.since.clone(),
-                after: issues.last().map(|i| i.cursor.clone()),
-                so_far: issues,
-            });
-            return Ok(());
-        }
 
         if let Some(issue) = issues.last() {
             state.last_time_wg = issue.updated_at.clone();

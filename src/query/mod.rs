@@ -61,15 +61,8 @@ where
 )]
 struct UpdatedIssues;
 
-#[derive(Debug, Default)]
-pub struct UpdatedIssuesResult {
-    pub total_count: i64,
-    pub issues: Vec<UpdatedIssue>,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdatedIssue {
-    pub cursor: String,
     pub issue_number: i64,
     pub updated_at: String,
     pub issue_labels: Vec<IssueLabel>,
@@ -86,27 +79,46 @@ pub fn updated_issues(
     wg_repo_owner: &str,
     wg_repo_name: &str,
     since: &str,
-    after: Option<String>,
-) -> Result<UpdatedIssuesResult, Error> {
-    let data = perform_query::<UpdatedIssues>(
-        token,
-        updated_issues::Variables {
-            repo_owner: wg_repo_owner.to_string(),
-            repo_name: wg_repo_name.to_string(),
-            since: since.to_string(),
-            after,
-        },
-    )?;
+) -> Result<Vec<UpdatedIssue>, Error> {
+    let mut result = Vec::new();
+    let mut after = None;
+    let mut total_count;
 
-    let mut result: UpdatedIssuesResult = Default::default();
-    if let Some(issues) = data.repository.map(|r| r.issues) {
-        result.total_count = issues.total_count;
-        if let Some(edges) = issues.edges {
-            for edge in edges.into_iter().flatten() {
-                let cursor = edge.cursor;
-                if let Some(issue) = edge.node {
+    loop {
+        let data = perform_query::<UpdatedIssues>(
+            token,
+            updated_issues::Variables {
+                repo_owner: wg_repo_owner.to_string(),
+                repo_name: wg_repo_name.to_string(),
+                since: since.to_string(),
+                after: after.clone(),
+            },
+        )?;
+
+        let issues = data
+            .repository
+            .ok_or_else(|| format_err!("repository not found"))?
+            .issues;
+
+        total_count = issues.total_count;
+
+        let edges = issues
+            .edges
+            .ok_or_else(|| format_err!("issue edges not found"))?;
+
+        if edges.is_empty() {
+            break;
+        }
+
+        after = edges.last().unwrap().as_ref().map(|e| e.cursor.clone());
+        result.extend(
+            edges
+                .into_iter()
+                .flatten()
+                .flat_map(|e| e.node)
+                .map(|n| {
                     let mut issue_labels = Vec::new();
-                    if let Some(labels) = issue.labels {
+                    if let Some(labels) = n.labels {
                         if let Some(edges) = labels.edges {
                             for edge in edges.into_iter().flatten() {
                                 if let Some(label) = edge.node {
@@ -118,14 +130,16 @@ pub fn updated_issues(
                             }
                         }
                     }
-                    result.issues.push(UpdatedIssue {
-                        cursor,
-                        issue_number: issue.number,
-                        updated_at: issue.updated_at,
+                    UpdatedIssue {
+                        issue_number: n.number,
+                        updated_at: n.updated_at,
                         issue_labels,
-                    });
-                }
-            }
+                    }
+                })
+        );
+
+        if result.len() >= total_count as usize {
+            break;
         }
     }
 
