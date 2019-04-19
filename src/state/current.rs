@@ -85,7 +85,7 @@ impl State {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.tasks.is_empty()
+        self.tasks.is_empty() && self.posted_tasks.is_empty()
     }
 
     fn post_task<T: Task + 'static>(&mut self, task: T) {
