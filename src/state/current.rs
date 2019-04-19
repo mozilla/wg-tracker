@@ -292,12 +292,6 @@ impl Task for ProcessWGCommentTask {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct IssueLabel {
-    name: String,
-    color: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
 struct QueryDecisionsKnownLabelsTask {
     so_far: Vec<query::KnownLabel>,
     after: Option<String>,
