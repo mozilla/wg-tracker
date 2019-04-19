@@ -419,11 +419,7 @@ impl State {
         } else {
             "Resolutions were"
         };
-        let issue_url = format!(
-            "{}/issues/{}",
-            config.wg_repo_url(),
-            t.issue_number,
-        );
+        let issue_url = format!("{}/issues/{}", config.wg_repo_url(), t.issue_number,);
         let body = format!(
             "{} made for [{}/#{}]({}).\n\
              \n\

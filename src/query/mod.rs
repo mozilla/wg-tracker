@@ -5,6 +5,54 @@ use graphql_client::*;
 type DateTime = String;
 type URI = String;
 
+fn do_perform_query<Q>(
+    token: &str,
+    mime_type: Option<&str>,
+    variables: Q::Variables,
+) -> Result<Q::ResponseData, Error>
+where
+    Q: GraphQLQuery,
+{
+    let mut request = CLIENT.post(GITHUB_ENDPOINT).bearer_auth(token);
+
+    if let Some(mime_type) = mime_type {
+        request = request.header("Accept", mime_type);
+    }
+
+    let response = request
+        .json(&Q::build_query(variables))
+        .send()
+        .context("could not perform network request")?
+        .json::<Response<Q::ResponseData>>()
+        .context("could not parse response")?;
+
+    if let Some(errors) = response.errors {
+        return Err(format_err!("errors in response: {:?}", errors));
+    }
+
+    response
+        .data
+        .ok_or_else(|| format_err!("no data in response"))
+}
+
+fn perform_query<Q>(token: &str, variables: Q::Variables) -> Result<Q::ResponseData, Error>
+where
+    Q: GraphQLQuery,
+{
+    do_perform_query::<Q>(token, None, variables)
+}
+
+fn perform_query_with_preview<Q>(
+    token: &str,
+    mime_type: &str,
+    variables: Q::Variables,
+) -> Result<Q::ResponseData, Error>
+where
+    Q: GraphQLQuery,
+{
+    do_perform_query::<Q>(token, Some(mime_type), variables)
+}
+
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "src/github_schema.graphql",
@@ -33,29 +81,15 @@ pub fn updated_issues(
     since: &str,
     after: Option<&str>,
 ) -> Result<UpdatedIssuesResult, Error> {
-    let q = UpdatedIssues::build_query(updated_issues::Variables {
-        repo_owner: wg_repo_owner.to_string(),
-        repo_name: wg_repo_name.to_string(),
-        since: since.to_string(),
-        after: after.map(|s| s.to_string()),
-    });
-
-    let response = CLIENT
-        .post(GITHUB_ENDPOINT)
-        .bearer_auth(token)
-        .json(&q)
-        .send()
-        .context("could not perform network request")?
-        .json::<Response<updated_issues::ResponseData>>()
-        .context("could not parse response")?;
-
-    if let Some(errors) = response.errors {
-        return Err(format_err!("errors in response: {:?}", errors));
-    }
-
-    let data = response
-        .data
-        .ok_or_else(|| format_err!("no data in response"))?;
+    let data = perform_query::<UpdatedIssues>(
+        token,
+        updated_issues::Variables {
+            repo_owner: wg_repo_owner.to_string(),
+            repo_name: wg_repo_name.to_string(),
+            since: since.to_string(),
+            after: after.map(|s| s.to_string()),
+        },
+    )?;
 
     let mut result: UpdatedIssuesResult = Default::default();
     if let Some(issues) = data.repository.map(|r| r.issues) {
@@ -114,29 +148,15 @@ pub fn issue_comments(
     number: i64,
     after: Option<&str>,
 ) -> Result<IssueCommentsResult, Error> {
-    let q = IssueComments::build_query(issue_comments::Variables {
-        repo_owner: wg_repo_owner.to_string(),
-        repo_name: wg_repo_name.to_string(),
-        number,
-        after: after.map(|s| s.to_string()),
-    });
-
-    let response = CLIENT
-        .post(GITHUB_ENDPOINT)
-        .bearer_auth(token)
-        .json(&q)
-        .send()
-        .context("could not perform network request")?
-        .json::<Response<issue_comments::ResponseData>>()
-        .context("could not parse response")?;
-
-    if let Some(errors) = response.errors {
-        return Err(format_err!("errors in response: {:?}", errors));
-    }
-
-    let data = response
-        .data
-        .ok_or_else(|| format_err!("no data in response"))?;
+    let data = perform_query::<IssueComments>(
+        token,
+        issue_comments::Variables {
+            repo_owner: wg_repo_owner.to_string(),
+            repo_name: wg_repo_name.to_string(),
+            number,
+            after: after.map(|s| s.to_string()),
+        },
+    )?;
 
     let mut result: IssueCommentsResult = Default::default();
     if let Some(issue) = data.repository.and_then(|r| r.issue) {
@@ -199,28 +219,14 @@ pub fn known_labels(
     repo_name: &str,
     after: Option<&str>,
 ) -> Result<KnownLabelsResult, Error> {
-    let q = KnownLabels::build_query(known_labels::Variables {
-        repo_owner: repo_owner.to_string(),
-        repo_name: repo_name.to_string(),
-        after: after.map(|s| s.to_string()),
-    });
-
-    let response = CLIENT
-        .post(GITHUB_ENDPOINT)
-        .bearer_auth(token)
-        .json(&q)
-        .send()
-        .context("could not perform network request")?
-        .json::<Response<known_labels::ResponseData>>()
-        .context("could not parse response")?;
-
-    if let Some(errors) = response.errors {
-        return Err(format_err!("errors in response: {:?}", errors));
-    }
-
-    let data = response
-        .data
-        .ok_or_else(|| format_err!("no data in response"))?;
+    let data = perform_query::<KnownLabels>(
+        token,
+        known_labels::Variables {
+            repo_owner: repo_owner.to_string(),
+            repo_name: repo_name.to_string(),
+            after: after.map(|s| s.to_string()),
+        },
+    )?;
 
     let mut result: KnownLabelsResult = Default::default();
     if let Some(labels) = data.repository.and_then(|r| r.labels) {
@@ -251,27 +257,13 @@ pub fn known_labels(
 struct RepoID;
 
 pub fn repo_id(token: &str, repo_owner: &str, repo_name: &str) -> Result<Option<String>, Error> {
-    let q = RepoID::build_query(repo_id::Variables {
-        repo_owner: repo_owner.to_string(),
-        repo_name: repo_name.to_string(),
-    });
-
-    let response = CLIENT
-        .post(GITHUB_ENDPOINT)
-        .bearer_auth(token)
-        .json(&q)
-        .send()
-        .context("could not perform network request")?
-        .json::<Response<repo_id::ResponseData>>()
-        .context("could not parse response")?;
-
-    if let Some(errors) = response.errors {
-        return Err(format_err!("errors in response: {:?}", errors));
-    }
-
-    let data = response
-        .data
-        .ok_or_else(|| format_err!("no data in response"))?;
+    let data = perform_query::<RepoID>(
+        token,
+        repo_id::Variables {
+            repo_owner: repo_owner.to_string(),
+            repo_name: repo_name.to_string(),
+        },
+    )?;
 
     Ok(data.repository.map(|r| r.id))
 }
@@ -285,29 +277,15 @@ pub fn repo_id(token: &str, repo_owner: &str, repo_name: &str) -> Result<Option<
 struct CreateLabel;
 
 pub fn create_label(token: &str, repo_id: &str, name: &str, color: &str) -> Result<String, Error> {
-    let q = CreateLabel::build_query(create_label::Variables {
-        repo_id: repo_id.to_string(),
-        name: name.to_string(),
-        color: color.to_string(),
-    });
-
-    let response = CLIENT
-        .post(GITHUB_ENDPOINT)
-        .bearer_auth(token)
-        .header("Accept", "application/vnd.github.bane-preview+json")
-        .json(&q)
-        .send()
-        .context("could not perform network request")?
-        .json::<Response<create_label::ResponseData>>()
-        .context("could not parse response")?;
-
-    if let Some(errors) = response.errors {
-        return Err(format_err!("errors in response: {:?}", errors));
-    }
-
-    let data = response
-        .data
-        .ok_or_else(|| format_err!("no data in response"))?;
+    let data = perform_query_with_preview::<CreateLabel>(
+        token,
+        "application/vnd.github.bane-preview+json",
+        create_label::Variables {
+            repo_id: repo_id.to_string(),
+            name: name.to_string(),
+            color: color.to_string(),
+        },
+    )?;
 
     data.create_label
         .and_then(|m| m.label)
@@ -330,29 +308,15 @@ pub fn create_issue(
     body: Option<String>,
     labels: Option<Vec<String>>,
 ) -> Result<String, Error> {
-    let q = CreateIssue::build_query(create_issue::Variables {
-        repo_id: repo_id.to_string(),
-        title,
-        body,
-        labels,
-    });
-
-    let response = CLIENT
-        .post(GITHUB_ENDPOINT)
-        .bearer_auth(token)
-        .json(&q)
-        .send()
-        .context("could not perform network request")?
-        .json::<Response<create_issue::ResponseData>>()
-        .context("could not parse response")?;
-
-    if let Some(errors) = response.errors {
-        return Err(format_err!("errors in response: {:?}", errors));
-    }
-
-    let data = response
-        .data
-        .ok_or_else(|| format_err!("no data in response"))?;
+    let data = perform_query::<CreateIssue>(
+        token,
+        create_issue::Variables {
+            repo_id: repo_id.to_string(),
+            title,
+            body,
+            labels,
+        },
+    )?;
 
     data.create_issue
         .and_then(|m| m.issue)
