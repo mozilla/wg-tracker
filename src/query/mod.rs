@@ -117,27 +117,26 @@ pub fn updated_issues(
                 .into_iter()
                 .flatten()
                 .flat_map(|e| e.node)
-                .map(|n| {
-                    let mut issue_labels = Vec::new();
-                    if let Some(labels) = n.labels {
-                        if let Some(edges) = labels.edges {
-                            for edge in edges.into_iter().flatten() {
-                                if let Some(label) = edge.node {
-                                    issue_labels.push(IssueLabel {
-                                        name: label.name,
-                                        color: label.color,
-                                    });
-                                }
-                            }
-                        }
-                    }
+                .map(|issue| {
+                    let issue_labels = issue
+                        .labels
+                        .and_then(|l| l.edges)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|e| e.node)
+                        .map(|label| IssueLabel {
+                            name: label.name,
+                            color: label.color,
+                        })
+                        .collect();
                     UpdatedIssue {
-                        issue_number: n.number,
-                        issue_title: n.title,
-                        updated_at: n.updated_at,
+                        issue_number: issue.number,
+                        issue_title: issue.title,
+                        updated_at: issue.updated_at,
                         issue_labels,
                     }
-                })
+                }),
         );
 
         if result.len() >= total_count as usize {
@@ -207,13 +206,11 @@ pub fn issue_comments(
                 .into_iter()
                 .flatten()
                 .flat_map(|e| e.node)
-                .map(|n| {
-                    IssueComment {
-                        created_at: n.created_at,
-                        url: n.url,
-                        body_text: n.body_text,
-                    }
-                })
+                .map(|n| IssueComment {
+                    created_at: n.created_at,
+                    url: n.url,
+                    body_text: n.body_text,
+                }),
         );
 
         if result.len() >= total_count as usize {
@@ -279,7 +276,10 @@ pub fn known_labels(
                 .into_iter()
                 .flatten()
                 .flat_map(|e| e.node)
-                .map(|n| KnownLabel { id: n.id, name: n.name }),
+                .map(|n| KnownLabel {
+                    id: n.id,
+                    name: n.name,
+                }),
         );
 
         if result.len() >= total_count as usize {
