@@ -389,4 +389,18 @@ pub fn remove_labels(token: &str, labelable: String, labels: Vec<String>) -> Res
     Ok(())
 }
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/github_schema.graphql",
+    query_path = "src/query/close_issue.graphql",
+    response_derives = "Debug"
+)]
+struct CloseIssue;
+
+pub fn close_issue(token: &str, id: String) -> Result<(), Error> {
+    perform_query::<CloseIssue>(token, close_issue::Variables { id })?;
+
+    Ok(())
+}
+
 const GITHUB_ENDPOINT: &'static str = "https://api.github.com/graphql";

@@ -182,7 +182,8 @@ impl Task for QueryDecisionsIssuesTask {
 
             // XXX File bug then comment with the bug URL.
 
-            state.post_task(RemoveDecisionsIssueBugLabelTask { issue_id: issue.id });
+            state.post_task(RemoveDecisionsIssueBugLabelTask { issue_id: issue.id.clone() });
+            state.post_task(CloseIssueTask { issue_id: issue.id });
         }
 
         Ok(())
@@ -515,6 +516,25 @@ impl Task for RemoveDecisionsIssueBugLabelTask {
             .clone();
 
         query::remove_labels(&config.github_key, self.issue_id.clone(), vec![label_id])?;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CloseIssueTask {
+    issue_id: String,
+}
+
+#[typetag::serde]
+impl Task for CloseIssueTask {
+    fn run(
+        &self,
+        _state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        query::close_issue(&config.github_key, self.issue_id.clone())?;
 
         Ok(())
     }
