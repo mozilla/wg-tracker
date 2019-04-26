@@ -15,11 +15,13 @@ pub struct State {
     tasks: VecDeque<Box<dyn Task>>,
     posted_tasks: Vec<Box<dyn Task>>,
     handled_wg_comments: HashSet<String>,
+    handled_decisions_issues: HashSet<i64>,
     #[serde(skip)]
     known_labels: Option<HashMap<String, String>>,
     #[serde(skip)]
     decisions_repo_id: Option<String>,
     last_time_wg: String,
+    last_time_decisions: String,
 }
 
 impl State {
@@ -28,9 +30,11 @@ impl State {
             tasks: VecDeque::new(),
             posted_tasks: Vec::new(),
             handled_wg_comments: HashSet::new(),
+            handled_decisions_issues: HashSet::new(),
             known_labels: None,
             decisions_repo_id: None,
             last_time_wg: format!("{}T00:00:00Z", date),
+            last_time_decisions: String::from("2019-01-01T00:00:00Z"),
         }
     }
 
@@ -43,10 +47,12 @@ impl State {
     }
 
     pub fn check_for_updates(&mut self) {
-        let task = QueryWGIssuesTask {
+        self.tasks.push_back(Box::new(QueryWGIssuesTask {
             since: self.last_time_wg.clone(),
-        };
-        self.tasks.push_back(Box::new(task));
+        }));
+        self.tasks.push_back(Box::new(QueryDecisionsIssuesTask {
+            since: self.last_time_decisions.clone(),
+        }));
     }
 
     pub fn save(&self, path: &Path, temp_path: &Path) -> Result<(), Error> {
@@ -133,6 +139,50 @@ impl Task for QueryWGIssuesTask {
                 issue_labels: issue.issue_labels,
                 since: self.since.clone(),
             });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct QueryDecisionsIssuesTask {
+    since: String,
+}
+
+#[typetag::serde]
+impl Task for QueryDecisionsIssuesTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        let issues = query::updated_issues(
+            &config.github_key,
+            &config.decisions_repo_owner,
+            &config.decisions_repo_name,
+            &self.since,
+        )?;
+
+        if let Some(issue) = issues.last() {
+            state.last_time_decisions = issue.updated_at.clone();
+        }
+
+        for issue in issues {
+            if state.handled_decisions_issues.contains(&issue.issue_number) {
+                continue;
+            }
+
+            if !issue.issue_labels.iter().any(|label| label.name == "bug") {
+                continue;
+            }
+
+            state.handled_decisions_issues.insert(issue.issue_number);
+
+            // XXX File bug then comment with the bug URL.
+
+            state.post_task(RemoveDecisionsIssueBugLabelTask { issue_id: issue.id });
         }
 
         Ok(())
@@ -432,6 +482,39 @@ impl Task for FileIssueTask {
             Some(body),
             Some(label_ids),
         )?;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RemoveDecisionsIssueBugLabelTask {
+    issue_id: String,
+}
+
+#[typetag::serde]
+impl Task for RemoveDecisionsIssueBugLabelTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        if state.known_labels.is_none() {
+            state.post_task(QueryDecisionsKnownLabelsTask);
+            state.post_task(self.clone());
+            return Ok(());
+        }
+
+        let label_id = state
+            .known_labels
+            .as_ref()
+            .unwrap()
+            .get("bug")
+            .ok_or_else(|| format_err!("decisions repo missing 'bug' label"))?
+            .clone();
+
+        query::remove_labels(&config.github_key, self.issue_id.clone(), vec![label_id])?;
 
         Ok(())
     }

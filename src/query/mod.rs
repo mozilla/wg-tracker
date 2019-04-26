@@ -144,6 +144,7 @@ struct UpdatedIssues;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct UpdatedIssue {
+    pub id: String,
     pub issue_number: i64,
     pub issue_title: String,
     pub updated_at: String,
@@ -165,24 +166,24 @@ paginated_query! {
 
 impl PaginatedQuery for UpdatedIssues {
     fn make_item(edge: Self::Edge) -> Option<Self::Item> {
-        edge.node.map(|issue| {
-            UpdatedIssue {
-                issue_number: issue.number,
-                issue_title: issue.title,
-                updated_at: issue.updated_at,
-                issue_labels: {
-                    issue.labels
-                        .and_then(|x| x.edges)
-                        .into_iter()
-                        .flatten()
-                        .flat_map(|e| e?.node)
-                        .map(|label| IssueLabel {
-                            name: label.name,
-                            color: label.color,
-                        })
-                        .collect()
-                }
-            }
+        edge.node.map(|issue| UpdatedIssue {
+            id: issue.id,
+            issue_number: issue.number,
+            issue_title: issue.title,
+            updated_at: issue.updated_at,
+            issue_labels: {
+                issue
+                    .labels
+                    .and_then(|x| x.edges)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|e| e?.node)
+                    .map(|label| IssueLabel {
+                        name: label.name,
+                        color: label.color,
+                    })
+                    .collect()
+            },
         })
     }
 }
@@ -372,6 +373,20 @@ pub fn create_issue(
         .and_then(|m| m.issue)
         .map(|i| i.id)
         .ok_or_else(|| format_err!("issue creation failed"))
+}
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/github_schema.graphql",
+    query_path = "src/query/remove_labels.graphql",
+    response_derives = "Debug"
+)]
+struct RemoveLabels;
+
+pub fn remove_labels(token: &str, labelable: String, labels: Vec<String>) -> Result<(), Error> {
+    perform_query::<RemoveLabels>(token, remove_labels::Variables { labelable, labels })?;
+
+    Ok(())
 }
 
 const GITHUB_ENDPOINT: &'static str = "https://api.github.com/graphql";
