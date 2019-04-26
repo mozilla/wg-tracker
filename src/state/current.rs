@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::query;
 use crate::repo_config::RepoConfig;
-use crate::util::escape_markdown;
+use crate::util::{escape_markdown, extract_urls};
 use failure::{format_err, Error, ResultExt};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -150,13 +150,22 @@ struct QueryDecisionsIssuesTask {
     since: String,
 }
 
+fn parse_component(s: &str) -> Result<(&str, &str), Error> {
+    let bits = s.split(" :: ").collect::<Vec<_>>();
+    if bits.len() == 2 {
+        Ok((bits[0], bits[1]))
+    } else {
+        Err(format_err!("could not parse component '{}'", s))
+    }
+}
+
 #[typetag::serde]
 impl Task for QueryDecisionsIssuesTask {
     fn run(
         &self,
         state: &mut State,
         config: &Config,
-        _repo_config: &RepoConfig,
+        repo_config: &RepoConfig,
     ) -> Result<(), Error> {
         let issues = query::updated_issues(
             &config.github_key,
@@ -180,9 +189,46 @@ impl Task for QueryDecisionsIssuesTask {
 
             state.handled_decisions_issues.insert(issue.issue_number);
 
-            // XXX File bug then comment with the bug URL.
+            let mut components = Vec::new();
+            for label in issue.issue_labels {
+                if !label.name.starts_with("[spec] ") {
+                    continue;
+                }
 
-            state.post_task(RemoveDecisionsIssueBugLabelTask { issue_id: issue.id.clone() });
+                let mut spec = String::from(&label.name["[spec] ".len()..]);
+                while let Some(c) = spec.pop() {
+                    if !(c >= '0' && c <= '9' || c == '-') {
+                        spec.push(c);
+                        break;
+                    }
+                }
+
+                if let Some(cs) = &repo_config.components {
+                    if let Some(c) = cs.get(&spec) {
+                        components.push(c);
+                    }
+                }
+            }
+
+            let product_component = if components.len() == 1 {
+                Some(parse_component(&components[0]))
+            } else if let Some(cs) = &repo_config.components {
+                cs.get("default").map(|c| parse_component(&*c))
+            } else {
+                None
+            };
+            let product_component = product_component.unwrap_or(Ok(("Invalid Bugs", "General")))?;
+
+            state.post_task(FileBugForDecisionsIssueTask {
+                product: product_component.0.to_string(),
+                component: product_component.1.to_string(),
+                issue_number: issue.issue_number,
+                issue_id: issue.id.clone(),
+            });
+
+            state.post_task(RemoveDecisionsIssueBugLabelTask {
+                issue_id: issue.id.clone(),
+            });
             state.post_task(CloseIssueTask { issue_id: issue.id });
         }
 
@@ -535,6 +581,115 @@ impl Task for CloseIssueTask {
         _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
         query::close_issue(&config.github_key, self.issue_id.clone())?;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct FileBugForDecisionsIssueTask {
+    product: String,
+    component: String,
+    issue_number: i64,
+    issue_id: String,
+}
+
+#[typetag::serde]
+impl Task for FileBugForDecisionsIssueTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        let title_and_body = query::issue_title_and_body(
+            &config.github_key,
+            &config.decisions_repo_owner,
+            &config.decisions_repo_name,
+            self.issue_number,
+        )?;
+
+        let title = title_and_body.0;
+        let body = title_and_body.1;
+
+        let body = body.split("----").next().unwrap_or_default();
+        let mut urls = extract_urls(&body)
+            .into_iter()
+            .map(|s| s.replace("github.com./", "github.com/"))
+            .collect::<Vec<_>>();
+
+        urls.push(format!(
+            "{}/issues/{}",
+            config.decisions_repo_url(),
+            self.issue_number
+        ));
+
+        state.post_task(FileBugForDecisionsIssueWithDetailsTask {
+            product: self.product.clone(),
+            component: self.component.clone(),
+            summary: title,
+            description: body.to_string(),
+            urls,
+            issue_number: self.issue_number,
+            issue_id: self.issue_id.clone(),
+        });
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct FileBugForDecisionsIssueWithDetailsTask {
+    product: String,
+    component: String,
+    summary: String,
+    description: String,
+    urls: Vec<String>,
+    issue_number: i64,
+    issue_id: String,
+}
+
+#[typetag::serde]
+impl Task for FileBugForDecisionsIssueWithDetailsTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        let url = query::file_bug(
+            &config.bugzilla_key,
+            self.product.clone(),
+            self.component.clone(),
+            self.summary.clone(),
+            self.description.clone(),
+            self.urls.clone(),
+        )?;
+
+        state.post_task(AddIssueCommentTask {
+            issue_id: self.issue_id.clone(),
+            body: url,
+        });
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct AddIssueCommentTask {
+    issue_id: String,
+    body: String,
+}
+
+#[typetag::serde]
+impl Task for AddIssueCommentTask {
+    fn run(
+        &self,
+        state: &mut State,
+        config: &Config,
+        _repo_config: &RepoConfig,
+    ) -> Result<(), Error> {
+        query::add_issue_comment(&config.github_key, self.issue_id.clone(), self.body.clone())?;
 
         Ok(())
     }

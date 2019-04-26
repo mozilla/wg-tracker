@@ -403,4 +403,98 @@ pub fn close_issue(token: &str, id: String) -> Result<(), Error> {
     Ok(())
 }
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/github_schema.graphql",
+    query_path = "src/query/issue_title_and_body.graphql",
+    response_derives = "Debug"
+)]
+struct IssueTitleAndBody;
+
+pub fn issue_title_and_body(
+    token: &str,
+    repo_owner: &str,
+    repo_name: &str,
+    number: i64,
+) -> Result<(String, String), Error> {
+    let data = perform_query::<IssueTitleAndBody>(
+        token,
+        issue_title_and_body::Variables {
+            repo_owner: repo_owner.to_string(),
+            repo_name: repo_name.to_string(),
+            number,
+        },
+    )?;
+
+    data.repository
+        .and_then(|r| r.issue)
+        .map(|issue| (issue.title, issue.body))
+        .ok_or_else(|| format_err!("issue not found"))
+}
+
+#[derive(Debug, Serialize)]
+struct FileBug<'a> {
+    api_key: &'a str,
+    product: String,
+    component: String,
+    version: &'a str,
+    summary: String,
+    description: String,
+    priority: &'a str,
+    see_also: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FileBugResponse {
+    id: i64,
+}
+
+pub fn file_bug(
+    token: &str,
+    product: String,
+    component: String,
+    summary: String,
+    description: String,
+    urls: Vec<String>,
+) -> Result<String, Error> {
+    let query = FileBug {
+        api_key: token,
+        product,
+        component,
+        version: "unspecified",
+        summary,
+        description,
+        priority: "P3",
+        see_also: urls,
+    };
+
+    let response = CLIENT
+        .post(BUGZILLA_ENDPOINT)
+        .json(&query)
+        .send()
+        .context("could not perform network request")?
+        .json::<FileBugResponse>()
+        .context("could not parse response")?;
+
+    Ok(format!(
+        "https://bugzilla.mozilla.org/show_bug.cgi?id={}",
+        response.id
+    ))
+}
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "src/github_schema.graphql",
+    query_path = "src/query/add_issue_comment.graphql",
+    response_derives = "Debug"
+)]
+struct AddIssueComment;
+
+pub fn add_issue_comment(token: &str, issue_id: String, body: String) -> Result<(), Error> {
+    perform_query::<AddIssueComment>(token, add_issue_comment::Variables { id: issue_id, body })?;
+
+    Ok(())
+}
+
 const GITHUB_ENDPOINT: &'static str = "https://api.github.com/graphql";
+const BUGZILLA_ENDPOINT: &'static str = "https://bugzilla.mozilla.org/rest/bug";

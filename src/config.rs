@@ -7,6 +7,7 @@ use std::io::Read;
 #[derive(Deserialize)]
 pub struct Config {
     pub github_key: String,
+    pub bugzilla_key: String,
     pub wg_repo_owner: String,
     pub wg_repo_name: String,
     pub decisions_repo_owner: String,

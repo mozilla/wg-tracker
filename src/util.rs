@@ -18,7 +18,15 @@ pub fn escape_markdown(s: &str) -> String {
         .into_owned()
 }
 
+pub fn extract_urls(s: &str) -> Vec<String> {
+    MARKDOWN_URLS_RE
+        .captures_iter(s)
+        .map(|m| m.get(1).unwrap().as_str().to_string())
+        .collect()
+}
+
 lazy_static! {
     pub static ref CLIENT: reqwest::Client = reqwest::Client::new();
     pub static ref ESCAPE_MARKDOWN_RE: Regex = Regex::new(r#"[#&()*+<>\[\]\\_`|-]"#).unwrap();
+    pub static ref MARKDOWN_URLS_RE: Regex = Regex::new(r#"\((https:[^)]*)"#).unwrap();
 }
