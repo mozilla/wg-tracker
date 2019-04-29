@@ -8,6 +8,7 @@ mod state;
 mod tracker;
 mod util;
 
+use chrono::Local;
 use clap::{App, Arg};
 use config::Config;
 use failure::Error;
@@ -25,7 +26,8 @@ fn run() -> Result<(), Error> {
 fn main() {
     if let Err(e) = run() {
         println!(
-            "error: {}{}",
+            "[{:?}] error: {}{}",
+            Local::now(),
             e,
             e.as_fail()
                 .cause()
