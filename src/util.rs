@@ -25,6 +25,10 @@ pub fn extract_urls(s: &str) -> Vec<String> {
         .collect()
 }
 
+pub fn add_dot(s: &str) -> String {
+    s.replace("github.com/", "github.com./")
+}
+
 lazy_static! {
     pub static ref CLIENT: reqwest::Client = reqwest::Client::new();
     pub static ref ESCAPE_MARKDOWN_RE: Regex = Regex::new(r#"[#&()*+<>\[\]\\_`|-]"#).unwrap();

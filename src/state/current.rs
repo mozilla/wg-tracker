@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::query;
 use crate::repo_config::RepoConfig;
-use crate::util::{escape_markdown, extract_urls};
+use crate::util::{add_dot, escape_markdown, extract_urls};
 use failure::{format_err, Error, ResultExt};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -508,13 +508,13 @@ impl Task for FileIssueTask {
             plural,
             config.wg_repo_name,
             self.issue_number,
-            issue_url,
+            add_dot(&issue_url),
             escape_markdown(&self.issue_title),
             self.resolutions
                 .iter()
                 .map(|s| format!("* RESOLVED: {}\n", escape_markdown(&s)))
                 .collect::<String>(),
-            self.comment_url,
+            add_dot(&self.comment_url),
         );
 
         let label_ids = self
