@@ -415,12 +415,14 @@ impl Task for EnsureLabelTask {
             return Ok(());
         }
 
-        query::create_label(
+        let label_id = query::create_label(
             &config.github_key,
             state.decisions_repo_id.as_ref().unwrap(),
             &self.name,
             &self.color,
         )?;
+
+        state.known_labels.as_mut().unwrap().insert(self.name.clone(), label_id);
 
         Ok(())
     }
