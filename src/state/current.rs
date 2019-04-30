@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::query;
 use crate::repo_config::RepoConfig;
-use crate::util::{add_dot, escape_markdown, extract_urls};
+use crate::util::{escape_markdown, extract_urls};
 use failure::{format_err, Error, ResultExt};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -508,13 +508,13 @@ impl Task for FileIssueTask {
             plural,
             config.wg_repo_name,
             self.issue_number,
-            add_dot(&issue_url),
+            issue_url,
             escape_markdown(&self.issue_title),
             self.resolutions
                 .iter()
                 .map(|s| format!("* RESOLVED: {}\n", escape_markdown(&s)))
                 .collect::<String>(),
-            add_dot(&self.comment_url),
+            self.comment_url,
         );
 
         let label_ids = self
@@ -617,7 +617,6 @@ impl Task for FileBugForDecisionsIssueTask {
         let body = body.split("----").next().unwrap_or_default();
         let mut urls = extract_urls(&body)
             .into_iter()
-            .map(|s| s.replace("github.com./", "github.com/"))
             .collect::<Vec<_>>();
 
         urls.push(format!(
@@ -687,7 +686,7 @@ struct AddIssueCommentTask {
 impl Task for AddIssueCommentTask {
     fn run(
         &self,
-        state: &mut State,
+        _state: &mut State,
         config: &Config,
         _repo_config: &RepoConfig,
     ) -> Result<(), Error> {
