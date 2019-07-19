@@ -440,6 +440,7 @@ struct FileBug<'a> {
     version: &'a str,
     summary: String,
     description: String,
+    type: String,
     priority: &'a str,
     see_also: Vec<String>,
 }
@@ -464,6 +465,7 @@ pub fn file_bug(
         version: "unspecified",
         summary,
         description,
+        type: "task",
         priority: "P3",
         see_also: urls,
     };
