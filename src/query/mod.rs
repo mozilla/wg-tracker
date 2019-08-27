@@ -441,6 +441,7 @@ struct FileBug<'a> {
     summary: String,
     description: String,
     priority: &'a str,
+    r#type: &'a str,
     see_also: Vec<String>,
 }
 
@@ -465,6 +466,7 @@ pub fn file_bug(
         summary,
         description,
         priority: "P3",
+        r#type: "defect",
         see_also: urls,
     };
 
