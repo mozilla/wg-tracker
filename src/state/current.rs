@@ -422,7 +422,11 @@ impl Task for EnsureLabelTask {
             &self.color,
         )?;
 
-        state.known_labels.as_mut().unwrap().insert(self.name.clone(), label_id);
+        state
+            .known_labels
+            .as_mut()
+            .unwrap()
+            .insert(self.name.clone(), label_id);
 
         Ok(())
     }
@@ -615,9 +619,7 @@ impl Task for FileBugForDecisionsIssueTask {
         let body = title_and_body.1;
 
         let body = body.split("----").next().unwrap_or_default();
-        let mut urls = extract_urls(&body)
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut urls = extract_urls(&body).into_iter().collect::<Vec<_>>();
 
         urls.push(format!(
             "{}/issues/{}",
