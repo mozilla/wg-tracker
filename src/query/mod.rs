@@ -468,13 +468,16 @@ pub fn file_bug(
         see_also: urls,
     };
 
-    let response = CLIENT
+    let response_string = CLIENT
         .post(BUGZILLA_ENDPOINT)
         .json(&query)
         .send()
         .context("could not perform network request")?
-        .json::<FileBugResponse>()
-        .context("could not parse response")?;
+        .text()
+        .context("could not read response")?;
+
+    let response: FileBugResponse = serde_json::from_str(&response_string)
+        .with_context(|_| format!("could not parse response ({})", response_string))?;
 
     Ok(format!(
         "https://bugzilla.mozilla.org/show_bug.cgi?id={}",
