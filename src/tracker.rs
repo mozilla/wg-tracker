@@ -38,7 +38,10 @@ impl Tracker {
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
-        self.lock()?;
+        if !self.try_lock()? {
+            // Silently exit if there is another wg-tracker instance running.
+            return Ok(());
+        }
 
         let repo_config_url = format!(
             "https://raw.githubusercontent.com/{}/{}/master/config.toml",
@@ -72,16 +75,18 @@ impl Tracker {
         }
     }
 
-    fn lock(&mut self) -> Result<(), Error> {
+    /// Attempts to lock the lockfile, to prevent simultanteous wg-tracker
+    /// instances from running.
+    fn try_lock(&mut self) -> Result<bool, Error> {
         let mut lockfile_path = PathBuf::from(&self.config.state_directory);
         lockfile_path.push("lock");
 
         let lockfile = File::create(lockfile_path).context("Could not open lockfile")?;
-        lockfile
-            .lock_exclusive()
-            .context("Could not lock lockfile")?;
+
+        let locked = lockfile.try_lock_exclusive().is_ok();
+
         self.lockfile = Some(lockfile);
 
-        Ok(())
+        Ok(locked)
     }
 }
